@@ -1,0 +1,14 @@
+# Target labels
+ opus-populate
+# Source files and their labels
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/opus-populate
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/opus-populate.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/opus-populate-complete.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-install.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-mkdir.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-download.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-update.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-patch.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-configure.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-build.rule
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-test.rule

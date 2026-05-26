@@ -1,0 +1,17 @@
+<resources>
+  <string name="app_name">SpeechFrameworkDemo</string>
+  <string name="keepalive_channel_name">Speech nền</string>
+  <string name="keepalive_channel_desc">Giữ app speech chạy trên robot</string>
+  <string name="keepalive_notification_title">Speech đang chạy</string>
+  <string name="keepalive_notification_text">Hey mini / Xiaozhi — chạy nền</string>
+  <string name="main_background_hint">Speech chạy nền (notification). Thoát màn hình được; sau bật nguồn robot tự start (~25s).</string>
+  <string name="transport_label">Transport Xiaozhi</string>
+  <string name="transport_websocket">WebSocket</string>
+  <string name="transport_mqtt">MQTT + UDP</string>
+  <string name="transport_mqtt_waiting_ota">MQTT cần OTA (chờ vài giây sau khi mở app).</string>
+  <string name="transport_mqtt_not_ready">Chưa có MQTT config — đợi OTA hoặc chọn WebSocket.</string>
+  <string name="transport_applied">Đã áp dụng: %1$s</string>
+  <string name="app_id">5d7f6355</string>
+  <!-- Picovoice AccessKey from https://console.picovoice.ai/ (free tier) -->
+  <string name="picovoice_access_key">HThfMXjMFYU3qIRhLgkeckw7N0jWJfamZlEEVo8VQu5ZPYygQ9ksJg==</string>
+</resources>

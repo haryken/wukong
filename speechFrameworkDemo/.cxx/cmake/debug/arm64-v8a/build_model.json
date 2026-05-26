@@ -1,0 +1,223 @@
+{
+  "abi": "ARM64_V8A",
+  "info": {
+    "abi": "ARM64_V8A",
+    "bitness": 64,
+    "deprecated": false,
+    "default": true
+  },
+  "originalCxxBuildFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cmake\\debug\\arm64-v8a",
+  "cxxBuildFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cmake\\debug\\arm64-v8a",
+  "abiPlatformVersion": 24,
+  "cmake": {
+    "cmakeWrappingBaseFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cxx\\debug\\arm64-v8a",
+    "cmakeArtifactsBaseFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cmake\\debug\\arm64-v8a",
+    "effectiveConfiguration": {
+      "name": "traditional-android-studio-cmake-environment",
+      "description": "Composite reified CMakeSettings configuration",
+      "generator": "Ninja",
+      "inheritEnvironments": [
+        "ndk"
+      ],
+      "buildRoot": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cmake\\debug\\arm64-v8a",
+      "cmakeToolchain": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865\\build\\cmake\\android.toolchain.cmake",
+      "cmakeExecutable": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\cmake\\3.18.1\\bin\\cmake.exe",
+      "variables": [
+        {
+          "name": "CMAKE_CXX_FLAGS",
+          "value": "-std\u003dc++11"
+        },
+        {
+          "name": "CMAKE_FIND_ROOT_PATH",
+          "value": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cmake\\debug\\prefab\\arm64-v8a\\prefab"
+        },
+        {
+          "name": "CMAKE_BUILD_TYPE",
+          "value": "Debug"
+        },
+        {
+          "name": "CMAKE_TOOLCHAIN_FILE",
+          "value": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865\\build\\cmake\\android.toolchain.cmake"
+        },
+        {
+          "name": "ANDROID_ABI",
+          "value": "arm64-v8a"
+        },
+        {
+          "name": "ANDROID_NDK",
+          "value": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865"
+        },
+        {
+          "name": "ANDROID_PLATFORM",
+          "value": "android-24"
+        },
+        {
+          "name": "CMAKE_ANDROID_ARCH_ABI",
+          "value": "arm64-v8a"
+        },
+        {
+          "name": "CMAKE_ANDROID_NDK",
+          "value": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865"
+        },
+        {
+          "name": "CMAKE_EXPORT_COMPILE_COMMANDS",
+          "value": "ON"
+        },
+        {
+          "name": "CMAKE_LIBRARY_OUTPUT_DIRECTORY",
+          "value": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\build\\intermediates\\cmake\\debug\\obj\\arm64-v8a"
+        },
+        {
+          "name": "CMAKE_RUNTIME_OUTPUT_DIRECTORY",
+          "value": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\build\\intermediates\\cmake\\debug\\obj\\arm64-v8a"
+        },
+        {
+          "name": "CMAKE_MAKE_PROGRAM",
+          "value": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\cmake\\3.18.1\\bin\\ninja.exe"
+        },
+        {
+          "name": "CMAKE_SYSTEM_NAME",
+          "value": "Android"
+        },
+        {
+          "name": "CMAKE_SYSTEM_VERSION",
+          "value": "24"
+        }
+      ]
+    },
+    "cmakeServerLogFile": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cmake\\debug\\arm64-v8a\\cmake_server_log.txt"
+  },
+  "variant": {
+    "buildSystemArgumentList": [],
+    "cFlagsList": [],
+    "cppFlagsList": [
+      "-std\u003dc++11"
+    ],
+    "variantName": "debug",
+    "objFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\build\\intermediates\\cmake\\debug\\obj",
+    "soFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\build\\intermediates\\cmake\\debug\\lib",
+    "isDebuggableEnabled": true,
+    "validAbiList": [
+      "ARM64_V8A"
+    ],
+    "buildTargetSet": [],
+    "implicitBuildTargetSet": [],
+    "cmakeSettingsConfiguration": "android-gradle-plugin-predetermined-name",
+    "module": {
+      "cxxFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx",
+      "splitsAbiFilterSet": [],
+      "intermediatesFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\build\\intermediates",
+      "gradleModulePathName": ":speechFrameworkDemo",
+      "moduleRootFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo",
+      "moduleBuildFile": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\build.gradle",
+      "makeFile": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\src\\main\\cpp\\CMakeLists.txt",
+      "buildSystem": "CMAKE",
+      "ndkFolder": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865",
+      "ndkVersion": "29.0.14206865",
+      "ndkSupportedAbiList": [
+        "ARMEABI_V7A",
+        "ARM64_V8A",
+        "X86",
+        "X86_64"
+      ],
+      "ndkDefaultAbiList": [
+        "ARMEABI_V7A",
+        "ARM64_V8A",
+        "X86",
+        "X86_64"
+      ],
+      "ndkDefaultStl": "LIBCXX_STATIC",
+      "ndkMetaPlatforms": {
+        "min": 21,
+        "max": 35,
+        "aliases": {
+          "20": 19,
+          "25": 24,
+          "J": 16,
+          "J-MR1": 17,
+          "J-MR2": 18,
+          "K": 19,
+          "L": 21,
+          "L-MR1": 22,
+          "M": 23,
+          "N": 24,
+          "N-MR1": 24,
+          "O": 26,
+          "O-MR1": 27,
+          "P": 28,
+          "Q": 29,
+          "R": 30,
+          "S": 31,
+          "Sv2": 32,
+          "Tiramisu": 33,
+          "UpsideDownCake": 34,
+          "VanillaIceCream": 35
+        }
+      },
+      "ndkMetaAbiList": [
+        {
+          "abi": "ARMEABI_V7A",
+          "bitness": 32,
+          "deprecated": false,
+          "default": true
+        },
+        {
+          "abi": "ARM64_V8A",
+          "bitness": 64,
+          "deprecated": false,
+          "default": true
+        },
+        {
+          "abi": "X86",
+          "bitness": 32,
+          "deprecated": false,
+          "default": true
+        },
+        {
+          "abi": "X86_64",
+          "bitness": 64,
+          "deprecated": false,
+          "default": true
+        }
+      ],
+      "originalCmakeToolchainFile": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865\\build\\cmake\\android.toolchain.cmake",
+      "cmakeToolchainFile": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865\\build\\cmake\\android.toolchain.cmake",
+      "cmake": {
+        "isValidCmakeAvailable": true,
+        "cmakeExe": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\cmake\\3.18.1\\bin\\cmake.exe",
+        "minimumCmakeVersion": "3.18.1",
+        "ninjaExe": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\cmake\\3.18.1\\bin\\ninja.exe",
+        "isPreferCmakeFileApiEnabled": true
+      },
+      "stlSharedObjectMap": {
+        "LIBCXX_SHARED": {
+          "ARMEABI_V7A": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\arm-linux-androideabi\\libc++_shared.so",
+          "ARM64_V8A": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\aarch64-linux-android\\libc++_shared.so",
+          "X86": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\i686-linux-android\\libc++_shared.so",
+          "X86_64": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk\\ndk\\29.0.14206865\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\x86_64-linux-android\\libc++_shared.so"
+        },
+        "LIBCXX_STATIC": {},
+        "NONE": {},
+        "SYSTEM": {}
+      },
+      "project": {
+        "rootBuildGradleFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2",
+        "cxxFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\.cxx",
+        "compilerSettingsCacheFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\.cxx",
+        "sdkFolder": "C:\\Users\\LEGION\\AppData\\Local\\Android\\Sdk",
+        "isNativeCompilerSettingsCacheEnabled": false,
+        "isBuildOnlyTargetAbiEnabled": true,
+        "ideBuildTargetAbi": "arm64-v8a,armeabi-v7a,armeabi",
+        "isCmakeBuildCohabitationEnabled": false,
+        "isPrefabEnabled": false,
+        "isV2NativeModelEnabled": true
+      },
+      "nativeBuildOutputLevel": "QUIET"
+    },
+    "prefabDirectory": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cmake\\debug\\prefab"
+  },
+  "buildSettings": {
+    "environmentVariables": []
+  },
+  "prefabFolder": "C:\\Users\\LEGION\\Desktop\\code\\ubt_speech_demo-develop3\\ubt_speech_demo-develop2\\speechFrameworkDemo\\.cxx\\cmake\\debug\\prefab\\arm64-v8a"
+}

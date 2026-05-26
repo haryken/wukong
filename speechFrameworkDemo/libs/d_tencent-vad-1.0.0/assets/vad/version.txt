@@ -1,0 +1,3 @@
+version: 1002
+details: /ceph/sz_ts80_new/songjuncao/repository/kaldi/egs/cheji/s5/run/run_vad_1500h/exp/tdnn_250
+md5sum:  565b98bec4be14985e98ccf412aaeb8f

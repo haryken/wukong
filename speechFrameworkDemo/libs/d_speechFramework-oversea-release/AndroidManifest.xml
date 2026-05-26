@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.ubtrobot.mini.speech.framework"
+    android:versionCode="1"
+    android:versionName="1.0" >
+
+    <uses-sdk
+        android:minSdkVersion="19"
+        android:targetSdkVersion="28" />
+
+    <uses-permission android:name="com.ubtrobot.master.permission.MASTER" />
+    <uses-permission android:name="com.ubtrobot.master.permission.MASTER_SYSTEM_SERVICE" />
+    <!-- <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/> -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+    <uses-permission android:name="com.ubtrobot.analytics.permissions.ANALYTICS" />
+
+    <application
+        android:allowBackup="true"
+        android:supportsRtl="true" >
+        <service
+            android:name="com.ubtrobot.mini.speech.framework.MicrophoneArrayService"
+            android:exported="true" >
+            <meta-data
+                android:name="master.service"
+                android:resource="@xml/service_mic_array" />
+        </service>
+        <service
+            android:name="com.ubtrobot.mini.speech.framework.skill.ChatSkill"
+            android:exported="true" >
+            <meta-data
+                android:name="master.skill"
+                android:resource="@xml/chat_skill_call_config" />
+        </service>
+        <service
+            android:name="com.ubtrobot.mini.speech.framework.skill.AudioRecordSkill"
+            android:exported="true" >
+            <meta-data
+                android:name="master.skill"
+                android:resource="@xml/record_skill_call_config" />
+        </service>
+
+        <!-- sal-speech-1.0.0.aar里包含了这个配置 -->
+        <!-- <service -->
+        <!-- android:name="com.ubtrobot.speech.service.SpeechSystemService" -->
+        <!-- android:exported="true" > -->
+        <!-- <meta-data -->
+        <!-- android:name="master.service" -->
+        <!-- android:resource="@xml/services_speech" /> -->
+        <!-- </service> -->
+
+
+        <!--
+        <provider
+        android:name="com.ubtrobot.speech.provider.SpeechContentProvider"
+        android:authorities="com.ubtrobot.speech.provider.configuration"
+        android:exported="true" />
+        -->
+    </application>
+
+</manifest>

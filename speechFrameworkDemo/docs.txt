@@ -1,0 +1,155 @@
+Summary
+The skill control interface is the interface to provide quick calling skills through skill names.
+
+These skills are designed and packaged to provide direct calls to third parties to improve development efficiency.
+
+Skill Overview
+What is Skill Skill is a defined component that represents the life cycle of a function. It is essentially an Android Service component.
+SkillApi.class Interface
+
+    /**
+     *
+     * start Skill
+     * @param skillName skill name
+     * @param listener   Execution result callback interface
+     * @return
+     */
+    public boolean startSkill(SKILL_NAME skillName, ResponseListener<Void> listener);
+
+    /**
+     * 获取所有的Skill名称
+     */
+    public  List<SKILL_NAME> loadAllSkills();
+
+Copy to clipboardErrorCopied
+SDK invocation mode
+ //Acquire all skills name：
+
+ List<SkillApi.SKILL_NAME> skill_names = SkillApi.get().loadAllSkills()
+
+
+ //Start Skill：
+ SkillApi.get().startSkill( skill_names.get(0), new ResponseListener<Void>() {
+
+                     @Override
+                    public void onResponseSuccess(Void aVoid) {
+                        Log.i(TAG,"onResponseSuccess");
+                    }
+
+                    @Override
+                    public void onFailure(int i, @NonNull String s) {
+                        Log.i(TAG,"onFailure i = " + i);
+                    }
+ });
+Copy to clipboardErrorCopied
+How to customize Skill
+create a java class extendsMiniMasterSkill, please refer to DemoSkill in the demo program
+Define a configuration file The configuration file is in xmlformat and must be placed in theres/xml/directory of the Android Studio project.The format is as follows
+<?xml version="1.0" encoding="utf-8"?>
+<skill name="demo_skill">
+    <call
+        path="/demo/startSkill">
+        <intent-filter category="speech">
+            <utterance sentence="startSkill" />
+        </intent-filter>
+    </call>
+</skill>
+Copy to clipboardErrorCopied
+note: category must be assigned a value of "speech". Other values are not currently supported.
+
+namerepresents the name of skill， represents the methods provided by this skill. A Skill can provide multiple methods. You can use path to define the method, or you can specify to specify. The caller can call this method based on the path or the name of the utterance in the . This definition is very similar to the definition of Activity in AndroidManifest.xml in Android.
+
+Statement in AndroidManifest.xml
+    <service android:name=".DemoSkill"
+        android:exported="true">
+      <meta-data android:name="master.skill" android:resource="@xml/demo_skill_path" />
+    </service>
+Copy to clipboardErrorCopied
+Call of Skill Skill call refers to calling a method in Skill. You can specify a path to call, or you can specify utterance to call. The sample code shown below is called by specifying utterance:
+    public static void startThisSkill() {
+        SkillHelper.startSkillByIntent("startSkill", null, new ResponseListener<Void>() {
+            @Override
+            public void onResponseSuccess(Void aVoid) {
+                Log.d(TAG,"onResponseSuccess");
+            }
+
+            @Override
+            public void onFailure(int i, @NonNull String s) {
+                Log.d(TAG,"onFailure");
+            }
+        });
+    }
+Copy to clipboardErrorCopied
+Stop of Skill Exit can be achieved by calling Skill's default method inside the Skill class, or it can be called externally to exit. The method of exiting externally is shown below:
+    public static void stopThisSkill() {
+        Master.get().execute(DemoSkill.class, new ContextRunnable<DemoSkill>() {
+            @Override
+            public void run(DemoSkill skill) {
+                skill.stopSkill(new Bundle());
+            }
+        });
+    }
+Copy to clipboardErrorCopied
+demo Please seeSkillApiActivityandDemoSkillin the demo project
+Call UBT builtin-skill:
+Builtin-Skill Table:
+Category	skill-intent-name	desc
+High-Difficulty Actions	exercise	exercise
+yoga	yoga
+kungfu	kungfu
+sit_down	Sit down
+foot_stand	Posing as a pheasant standing on one foot
+fly	Dapeng spread his windgs
+stand_up	Stand up
+Routine Actions	raisinghands	Raising hands
+raisingrightleg	Raising right leg
+raisingleftleg	Raising left leg
+stoop	stoop
+Keep_turning_right	Turning right
+Keep_turning_left	Turing left
+Keep_moving_forward	Moving forward
+Keep_going_backwards	Going backwards
+crouch	Crouch
+bow_step	Bow step
+say_hi	Say hi
+sneeze	Sneeze
+burp	Burp
+break_wind	Break wind
+scratch	Scratch
+hand_kiss	Hand Kiss
+hug	Hug
+Stretch	Stretch
+doze	Doze
+frighten	Frighten
+shake_hand	Shaking hands
+nod	Nod
+shake_head	Shaking head
+turn_head	Turn head
+be_cute	Cute
+dancing	Dancing
+Help intent	what_can	What can I do
+how_bind	How to bind
+how_connect	How to connect to network
+how_volume	How to adjust volume
+how_stop	How to stop me
+how_shutoff	How to shutoff
+how_rest	How to have a rest
+how_lte	How to open 4G
+how_photo	How to thake a photo
+FOURG_statu	Query 4G switch status
+charge_statu	Query charge status
+which_wifi	Which wifi to connect
+how_battery	How much battery
+how_content	How much content
+Usage example :
+
+//call exercise
+SkillHelper.startSkillByIntent("exercise", null, new ResponseCallback() {
+    @Override public void onResponse(Request request, Response response) {
+      Log.i(TAG, "start success.");
+    }
+
+    @Override public void onFailure(Request request, CallException e) {
+      Log.i(TAG, e.getMessage());
+    }
+  });

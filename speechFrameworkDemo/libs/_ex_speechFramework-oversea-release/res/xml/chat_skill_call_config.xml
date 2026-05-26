@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<skill name="chat_skill">
+  <call path="/tvs/startChat">
+    <intent-filter category="speech">
+      <utterance sentence="startChat" />
+    </intent-filter>
+  </call>
+  <call path="/tvs/stopChat" />
+</skill>
+

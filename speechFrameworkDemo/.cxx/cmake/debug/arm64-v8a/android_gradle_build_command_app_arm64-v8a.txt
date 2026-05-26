@@ -1,0 +1,7 @@
+Executable : C:\Users\LEGION\AppData\Local\Android\Sdk\cmake\3.18.1\bin\ninja.exe
+arguments : 
+-C
+C:\Users\LEGION\Desktop\code\ubt_speech_demo-develop3\ubt_speech_demo-develop2\speechFrameworkDemo\.cxx\cmake\debug\arm64-v8a
+app
+jvmArgs : 
+

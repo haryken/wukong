@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service name="speech_contact">
+    <call path="/onCallWillStart"/>
+    <call path="/onCallFinished"/>
+    <call path="/onCallComingUp"/>
+
+</service>

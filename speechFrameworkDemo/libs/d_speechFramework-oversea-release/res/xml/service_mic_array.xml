@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service name="microphone_array_service">
+  <call path="/microphone-array/setLockAngle" />
+  <call path="/microphone-array/enable" />
+  <call path="/microphone-array/disable" />
+  <call path="/microphone-array/isEnable" />
+  <call path="/microphone-array/startRecording" />
+  <call path="/microphone-array/stopRecording" />
+  <call path="/microphone-array/initResult" />
+  <!--<call path="/microphone-array/setAccessToken" />
+  <call path="/microphone-array/getAccessToken" />-->
+  <call path="/microphone-array/authorize" />
+</service>

@@ -1,0 +1,2 @@
+C:\Users\LEGION\Desktop\code\ubt_speech_demo-develop3\ubt_speech_demo-develop2\speechFrameworkDemo\.cxx\cmake\debug\arm64-v8a\_deps\opus-src\CMakeLists.txt
+C:\Users\LEGION\Desktop\code\ubt_speech_demo-develop3\ubt_speech_demo-develop2\speechFrameworkDemo\src\main\cpp\CMakeLists.txt

@@ -1,0 +1,3 @@
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/opus-populate.dir
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/edit_cache.dir
+C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/rebuild_cache.dir

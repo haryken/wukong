@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.ubtrobot.mini.speech.framework.demo">
+
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <!-- Giống mini-outer-sdk-demo: Master + lưu ảnh TakePicApi / Sauron -->
+  <uses-permission android:name="com.ubtrobot.master.permission.MASTER" />
+  <uses-permission
+      android:name="android.permission.MOUNT_UNMOUNT_FILESYSTEMS"
+      tools:ignore="ProtectedPermissions" />
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+  <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <!-- Fallback chụp ảnh vision khi Master/Sauron không có /api/camera (Camera2 + ImageReader) -->
+  <uses-permission android:name="android.permission.CAMERA" />
+  <uses-feature
+      android:name="android.hardware.camera"
+      android:required="false" />
+  <uses-feature
+      android:name="android.hardware.camera.any"
+      android:required="false" />
+
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+  <application
+      android:usesCleartextTraffic="true"
+      android:name=".SpeechApplication"
+      android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+      android:allowBackup="true"
+      android:icon="@mipmap/ic_launcher"
+      android:label="@string/app_name"
+      android:roundIcon="@mipmap/ic_launcher_round"
+      android:supportsRtl="true"
+      android:theme="@style/AppTheme"
+      android:testOnly="false"
+      tools:ignore="GoogleAppIndexingWarning"
+      tools:replace="android:appComponentFactory,android:testOnly">
+    <activity android:name=".MainActivity">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+    <service
+        android:name=".DemoMasterService"
+        android:exported="true">
+      <meta-data
+          android:name="master.service"
+          android:resource="@xml/service_demo" />
+    </service>
+    <meta-data android:name="ubt-master-app" android:value="third_part_speechservice"/>
+
+    <!-- Run MicrophoneArrayService in separate process to avoid ANR during heavy init (MNPCLib, WeiNa, etc.) -->
+    <service
+        android:name="com.ubtrobot.mini.speech.framework.MicrophoneArrayService"
+        android:process=":speech" />
+
+    <!-- Tự chạy sau khi robot bật nguồn (không cần mở app tay). -->
+    <receiver
+        android:name=".SpeechBootReceiver"
+        android:directBootAware="true"
+        android:enabled="true"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+        <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
+
+    <!-- Giữ process — notification thấp, không cần mở MainActivity. -->
+    <service
+        android:name=".SpeechKeepAliveService"
+        android:enabled="true"
+        android:exported="false" />
+
+    <service android:name="org.eclipse.paho.android.service.MqttService" />
+  </application>
+
+</manifest>

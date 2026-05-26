@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<skill name="audio_record_skill">
+  <call path="/tvs/startRecord">
+    <intent-filter category="speech">
+      <utterance sentence="startRecord" />
+    </intent-filter>
+  </call>
+</skill>
+

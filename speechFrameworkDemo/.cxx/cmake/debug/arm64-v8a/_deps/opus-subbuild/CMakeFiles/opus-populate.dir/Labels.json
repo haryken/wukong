@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/opus-populate"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/opus-populate.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/CMakeFiles/opus-populate-complete.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-install.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-mkdir.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-download.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-update.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-patch.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-configure.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-build.rule"
+		},
+		{
+			"file" : "C:/Users/LEGION/Desktop/code/ubt_speech_demo-develop3/ubt_speech_demo-develop2/speechFrameworkDemo/.cxx/cmake/debug/arm64-v8a/_deps/opus-subbuild/opus-populate-prefix/src/opus-populate-stamp/opus-populate-test.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"opus-populate"
+		],
+		"name" : "opus-populate"
+	}
+}
