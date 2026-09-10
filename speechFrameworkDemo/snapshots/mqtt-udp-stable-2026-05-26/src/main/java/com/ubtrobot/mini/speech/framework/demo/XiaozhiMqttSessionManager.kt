@@ -60,8 +60,6 @@ class XiaozhiMqttSessionManager(
         const val TTS_SAMPLE_RATE = 24000
         const val CHANNELS = 1
         const val FRAME_MS = 60
-        /** 60ms mono 16-bit @ 24kHz — khớp ESP32 audio_service frame_loss (decoder_frame_size_ zeros). */
-        private val TTS_FRAME_LOSS_SILENCE_PCM = ByteArray(TTS_SAMPLE_RATE * FRAME_MS / 1000 * 2)
         const val PCM_GAIN_CONCENTUS = 2f
 
         @JvmStatic
@@ -70,8 +68,8 @@ class XiaozhiMqttSessionManager(
         }
         /** Delay rất ngắn sau TTS stop rồi chờ phát xong – giao tiếp liên tục, mở mic sớm. */
         private const val MIC_DELAY_MS_AFTER_TTS = 60L
-        /** Delay ngắn sau playback xong rồi ting (echo loa: [TING_ECHO_GUARD_MS] sau ting). */
-        private const val DELAY_AFTER_PLAYBACK_BEFORE_MIC_MS = 80L
+        /** Delay sau khi playback xong rồi send listen + ting – đủ để echo loa giảm. */
+        private const val DELAY_AFTER_PLAYBACK_BEFORE_MIC_MS = 400L
         /** Timeout chờ phát xong (nhạc/TTS dài) – tránh kẹt vô hạn. */
         private const val WAIT_PLAYBACK_TIMEOUT_MS = 20_000L
         /** TTS/nhạc phát quá ngưỡng này (ms) thì sau stop ép đóng WS + mở mới để giao tiếp/hey mini hoạt động lại (session dài dễ treo). */
@@ -90,12 +88,14 @@ class XiaozhiMqttSessionManager(
         private var refreshSessionAfterNextTtsStop = false
         @Volatile
         private var lastSkillPcmBlockLogMs = 0L
-        /** Chỉ sau dance/skill: chặn PCM ngắn sau ting (AEC sau motor). */
-        private const val SETTLE_AFTER_SKILL_MS = 600L
-        /** Mic restart (onTtsStoppedRestartMic) rồi ting – chỉ chờ tối thiểu. */
-        private const val PRE_TING_MIC_WARMUP_MS = 80L
-        /** Chỉ chặn uplink trong lúc ting vang (~camera_click) – xong là nói được. */
-        private const val TING_ECHO_GUARD_MS = 280L
+        /** Chỉ sau dance/skill: chặn PCM ngắn sau ting (AEC sau motor). Không dùng sau chào hey mini. */
+        private const val SETTLE_AFTER_SKILL_MS = 1200L
+        /** Mic restart xong rồi mới ting – user nói ngay sau ting không bị frame im lặng. */
+        private const val PRE_TING_MIC_WARMUP_MS = 400L
+        /** Sau ting: listen mới + chờ ngắn rồi mới PCM (mic đã restart xong). */
+        private const val POST_TING_PCM_DELAY_MS = 500L
+        /** Sau chào hey mini: thêm settle (loa + AEC) trước khi uplink PCM. */
+        private const val GREETING_POST_TING_SETTLE_MS = 800L
         /** Chỉ khi sau mở UDP mà không có TTS start – tránh cắt giữa câu chào (trước 6s quá ngắn). */
         private const val GREETING_NO_TTS_TIMEOUT_MS = 15_000L
         /** Gửi Opus im lặng khi chặn mic thật – server không timeout goodbye vì 0 uplink. */
@@ -134,14 +134,8 @@ class XiaozhiMqttSessionManager(
     private val listenSendMutex = Mutex()
     @Volatile
     private var lastListenSentMs = 0L
-    /**
-     * Cooldown sau listen khi vẫn đang TTS/chưa qua ting.
-     * Sau ting: [pcmAllowedRightAfterTingUntilMs] bỏ qua cooldown này.
-     */
-    private val LISTEN_COOLDOWN_MS = 400L
-    /** Sau playTingRestartMicAndFinish – cho phép uplink ngay (chỉ còn [TING_ECHO_GUARD_MS]). */
-    @Volatile
-    private var pcmAllowedRightAfterTingUntilMs = 0L
+    /** Sau send listen: server cần ~1.5s trước khi nhận Opus (tránh echo STT ngay sau ting). */
+    private val LISTEN_COOLDOWN_MS = 1500L
     @Volatile
     private var lastReconnectAttemptMs = 0L
     /** Đang reopen (hey mini / auto) – bỏ qua CLOSED giả do close có chủ ý; chặn PCM. */
@@ -188,9 +182,7 @@ class XiaozhiMqttSessionManager(
         if (!ensureChannelOpen()) return "WS chưa mở"
         if (lastListenSentMs == 0L) return "chưa gửi listen"
         val sinceListen = now - lastListenSentMs
-        if (sinceListen < LISTEN_COOLDOWN_MS && now > pcmAllowedRightAfterTingUntilMs) {
-            return "listen cooldown ${sinceListen}ms"
-        }
+        if (sinceListen < LISTEN_COOLDOWN_MS) return "listen cooldown ${sinceListen}ms"
         return null
     }
 
@@ -300,7 +292,8 @@ class XiaozhiMqttSessionManager(
             Log.w(TAG, "[Greeting] ${GREETING_NO_TTS_TIMEOUT_MS}ms không có TTS – mở PCM (fallback)")
             finishFirstGreetingPhase("MQTT greeting timeout", forceClear = true)
             sendListenStartOnly("greeting timeout", ListeningMode.AUTO_STOP, forceRefresh = true)
-            armPcmUnblockAfterTing()
+            suppressServerPcmAfterListenUntilMs =
+                System.currentTimeMillis() + LISTEN_COOLDOWN_MS + POST_TING_PCM_DELAY_MS + GREETING_POST_TING_SETTLE_MS
             mainHandler.post { onTtsStoppedRestartMic?.invoke() }
         }
     }
@@ -314,21 +307,15 @@ class XiaozhiMqttSessionManager(
         mainHandler.post { onFirstGreetingMicReady?.invoke() }
     }
 
-    /** Sau ting: chỉ guard echo ting ngắn, bỏ listen cooldown 1.5s+ (user nói ngay). */
-    private fun armPcmUnblockAfterTing(extraSettleMs: Long = 0L) {
-        val guardMs = TING_ECHO_GUARD_MS + extraSettleMs
-        suppressServerPcmAfterListenUntilMs = System.currentTimeMillis() + guardMs
-        pcmAllowedRightAfterTingUntilMs = System.currentTimeMillis() + 60_000L
-        Log.i(TAG, "[Mic] sau ting: uplink PCM sau ${guardMs}ms (ting xong là nói)")
-    }
-
-    /** Sau dance/skill: thêm settle AEC motor (vẫn ngắn hơn trước). */
+    /** Sau listen + ting (chỉ sau dance/skill): đợi mic/AEC ổn rồi mới gửi Opus. */
     private fun armPcmSettleAfterListen(extraMs: Long) {
-        armPcmUnblockAfterTing(extraMs)
+        suppressServerPcmAfterListenUntilMs = System.currentTimeMillis() + LISTEN_COOLDOWN_MS + extraMs
+        Log.i(TAG, "[Mic] settle ${LISTEN_COOLDOWN_MS + extraMs}ms sau ting (skill/dance)")
     }
 
     /**
-     * Mic restart → ting → listen → uplink gần như ngay (chỉ [TING_ECHO_GUARD_MS] chặn echo ting).
+     * Mic restart → ting → listen mới (sau mic ổn) → mở PCM.
+     * Listen trước ting dễ khiến server "nghe" trong lúc mic vừa stop/start → user nói sau ting không STT.
      */
     private suspend fun playTingRestartMicAndFinish(
         wasGreeting: Boolean,
@@ -337,14 +324,13 @@ class XiaozhiMqttSessionManager(
     ) {
         isTtsPlaying = true
         isTtsPlayingSinceMs = System.currentTimeMillis()
-        Log.i(TAG, "[TTS] ting ngay ($reason)")
+        mainHandler.post { onTtsStoppedRestartMic?.invoke() }
+        delay(if (wasGreeting || afterRobotSkill) PRE_TING_MIC_WARMUP_MS else 150L)
         try {
             WakeupAudioPlayer.get(context).play()
         } catch (e: Exception) {
             Log.w(TAG, "Play mic-ready sound failed", e)
         }
-        mainHandler.post { onTtsStoppedRestartMic?.invoke() }
-        delay(if (wasGreeting || afterRobotSkill) PRE_TING_MIC_WARMUP_MS else 0L)
         finishFirstGreetingPhase(reason, forceClear = wasGreeting)
         if (!protocol.isAudioChannelOpened()) {
             Log.w(TAG, "playTingRestartMicAndFinish: WS đóng sau ting – không gửi listen/PCM")
@@ -358,7 +344,14 @@ class XiaozhiMqttSessionManager(
         if (afterRobotSkill) {
             armPcmSettleAfterListen(SETTLE_AFTER_SKILL_MS)
         } else {
-            armPcmUnblockAfterTing()
+            val greetingExtra = if (wasGreeting) GREETING_POST_TING_SETTLE_MS else 0L
+            val settleMs = LISTEN_COOLDOWN_MS + POST_TING_PCM_DELAY_MS + greetingExtra
+            suppressServerPcmAfterListenUntilMs = System.currentTimeMillis() + settleMs
+            Log.i(
+                TAG,
+                "[STT flow] sau ting: listen mới + PCM sau ${settleMs}ms" +
+                    if (wasGreeting) " (chào hey mini)" else ""
+            )
         }
         isTtsPlaying = false
         isTtsPlayingSinceMs = 0L
@@ -398,13 +391,13 @@ class XiaozhiMqttSessionManager(
                     return@withLock false
                 }
                 resetSttActivityOnChannelReset()
+                onWebSocketSessionReady?.invoke()
                 if (isHeyMini) {
                     preparePlayerForGreetingTts()
                     protocol.sendWakeWordDetected("hey mini")
                     delay(80)
                     // Server thường chỉ đẩy Opus TTS qua UDP sau listen – uplink PCM vẫn chặn (suppress greeting).
                     sendListenStartOnly("hey mini chào", ListeningMode.AUTO_STOP, forceRefresh = true)
-                    onWebSocketSessionReady?.invoke()
                     scheduleGreetingTimeout()
                     Log.i(
                         TAG,
@@ -412,7 +405,6 @@ class XiaozhiMqttSessionManager(
                     )
                 } else {
                     sendListenStartOnly(reason, ListeningMode.AUTO_STOP, forceRefresh = false)
-                    onWebSocketSessionReady?.invoke()
                     if (!deferMicRestart) {
                         mainHandler.post { onTtsStoppedRestartMic?.invoke() }
                     }
@@ -537,10 +529,6 @@ class XiaozhiMqttSessionManager(
                     var decodeNulls = 0
                     var decodeOk = 0
                     protocol.incomingAudioFlow.collect { opus: ByteArray ->
-                        if (opus.isEmpty()) {
-                            emit(TTS_FRAME_LOSS_SILENCE_PCM)
-                            return@collect
-                        }
                         val pcm = decoder.decode(opus)
                         if (pcm == null) {
                             decodeNulls++
@@ -682,7 +670,6 @@ class XiaozhiMqttSessionManager(
                                 }
                                 val recoveryGen = ++ttsRecoveryGeneration
                                 scope.launch ttsRecovery@{
-                                    val ttsStopAt = System.currentTimeMillis()
                                     delay(MIC_DELAY_MS_AFTER_TTS)
                                     try {
                                         withTimeout(WAIT_PLAYBACK_TIMEOUT_MS) {
@@ -694,10 +681,6 @@ class XiaozhiMqttSessionManager(
                                         Log.w(TAG, "waitForPlaybackCompletion", e)
                                     }
                                     delay(DELAY_AFTER_PLAYBACK_BEFORE_MIC_MS)
-                                    Log.i(
-                                        TAG,
-                                        "[TTS] playback drain xong, ting sau ${System.currentTimeMillis() - ttsStopAt}ms từ tts stop",
-                                    )
                                     if (recoveryGen != ttsRecoveryGeneration) {
                                         Log.i(TAG, "TTS recovery bị hủy (WS đóng giữa chừng) – không gửi listen; nói hey mini hoặc chạm đầu")
                                         isTtsPlaying = false

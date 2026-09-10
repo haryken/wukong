@@ -11,7 +11,7 @@ import info.dourok.voicebot.data.model.DummyDataGenerator
 import info.dourok.voicebot.protocol.AudioState
 import info.dourok.voicebot.protocol.ListeningMode
 import info.dourok.voicebot.protocol.OpenChannelResult
-import info.dourok.voicebot.protocol.MqttProtocol
+import info.dourok.voicebot.protocol.WebsocketProtocol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,15 +31,15 @@ import java.nio.ByteOrder
 import java.util.Locale
 
 /**
- * Xiaozhi voice session qua MQTT + UDP (file riêng — không đụng [XiaozhiWebSocketSessionManager]).
- * Cơ chế STT/TTS/MCP/LLM emotion giống WebSocket, chỉ khác transport.
+ * Xiaozhi voice session qua WebSocket.
  * @param audioSessionId Session dùng chung với AudioRecord (AEC).
  */
-class XiaozhiMqttSessionManager(
+class XiaozhiWebSocketSessionManager(
     private val context: Context,
     private val deviceId: String,
     private val clientId: String,
-    private val mqttConfig: XiaozhiMqttConfig,
+    private val websocketUrl: String,
+    private val accessToken: String,
     private val encoder: IOpusEncoder,
     private val decoder: IOpusDecoder,
     /** 1f = native. >1f = Concentus (bù PCM nhỏ). */
@@ -52,16 +52,14 @@ class XiaozhiMqttSessionManager(
     private val onFirstGreetingMicReady: (() -> Unit)? = null,
     private val usesNativeOpus: Boolean = pcmGain <= 1f
 ) : XiaozhiSessionApi {
-    override fun getTransportLabel(): String = "MQTT + UDP"
+    override fun getTransportLabel(): String = "WebSocket"
 
     companion object {
-        private const val TAG = "XiaozhiMQTT"
+        private const val TAG = "XiaozhiWS"
         const val SAMPLE_RATE = 16000
         const val TTS_SAMPLE_RATE = 24000
         const val CHANNELS = 1
         const val FRAME_MS = 60
-        /** 60ms mono 16-bit @ 24kHz — khớp ESP32 audio_service frame_loss (decoder_frame_size_ zeros). */
-        private val TTS_FRAME_LOSS_SILENCE_PCM = ByteArray(TTS_SAMPLE_RATE * FRAME_MS / 1000 * 2)
         const val PCM_GAIN_CONCENTUS = 2f
 
         @JvmStatic
@@ -70,8 +68,8 @@ class XiaozhiMqttSessionManager(
         }
         /** Delay rất ngắn sau TTS stop rồi chờ phát xong – giao tiếp liên tục, mở mic sớm. */
         private const val MIC_DELAY_MS_AFTER_TTS = 60L
-        /** Delay ngắn sau playback xong rồi ting (echo loa: [TING_ECHO_GUARD_MS] sau ting). */
-        private const val DELAY_AFTER_PLAYBACK_BEFORE_MIC_MS = 80L
+        /** Delay sau khi playback xong rồi send listen + ting – càng nhỏ mic mở càng nhanh. */
+        private const val DELAY_AFTER_PLAYBACK_BEFORE_MIC_MS = 120L
         /** Timeout chờ phát xong (nhạc/TTS dài) – tránh kẹt vô hạn. */
         private const val WAIT_PLAYBACK_TIMEOUT_MS = 20_000L
         /** TTS/nhạc phát quá ngưỡng này (ms) thì sau stop ép đóng WS + mở mới để giao tiếp/hey mini hoạt động lại (session dài dễ treo). */
@@ -90,18 +88,12 @@ class XiaozhiMqttSessionManager(
         private var refreshSessionAfterNextTtsStop = false
         @Volatile
         private var lastSkillPcmBlockLogMs = 0L
-        /** Chỉ sau dance/skill: chặn PCM ngắn sau ting (AEC sau motor). */
-        private const val SETTLE_AFTER_SKILL_MS = 600L
-        /** Mic restart (onTtsStoppedRestartMic) rồi ting – chỉ chờ tối thiểu. */
-        private const val PRE_TING_MIC_WARMUP_MS = 80L
-        /** Chỉ chặn uplink trong lúc ting vang (~camera_click) – xong là nói được. */
-        private const val TING_ECHO_GUARD_MS = 280L
-        /** Chỉ khi sau mở UDP mà không có TTS start – tránh cắt giữa câu chào (trước 6s quá ngắn). */
-        private const val GREETING_NO_TTS_TIMEOUT_MS = 15_000L
-        /** Gửi Opus im lặng khi chặn mic thật – server không timeout goodbye vì 0 uplink. */
-        private const val UPLINK_KEEPALIVE_INTERVAL_MS = 400L
-        /** 60ms @ 16kHz mono 16-bit – khớp DemoRecognizer frame. */
-        private val UPLINK_SILENCE_PCM = ByteArray(1920)
+        /** Chỉ sau dance/skill: chặn PCM ngắn sau ting (AEC sau motor). Không dùng sau chào hey mini. */
+        private const val SETTLE_AFTER_SKILL_MS = 1200L
+        /** Mic restart xong rồi mới ting – user nói ngay sau ting không bị frame im lặng. */
+        private const val PRE_TING_MIC_WARMUP_MS = 400L
+        /** Sau ting: listen mới + chờ ngắn rồi mới PCM (mic đã restart xong). */
+        private const val POST_TING_PCM_DELAY_MS = 200L
         /** Sau listen+ting: chặn PCM thêm vài giây (mic/AEC ổn sau dance). */
         @Volatile
         private var suppressServerPcmAfterListenUntilMs = 0L
@@ -119,13 +111,8 @@ class XiaozhiMqttSessionManager(
     private val deviceInfoStub: DeviceInfo =
         DummyDataGenerator.generate(deviceId, clientId)
 
-    private val protocol = MqttProtocol(context, mqttConfig)
-
-    @Volatile
-    private var lastUplinkKeepaliveMs = 0L
-    @Volatile
-    private var pendingReconnectAfterTts = false
-    private var midTtsDisconnectJob: Job? = null
+    private val protocol =
+        WebsocketProtocol(deviceInfoStub, websocketUrl, accessToken)
 
     /** Opus encoder không thread-safe – chỉ một luồng encode tại một thời điểm (tránh internal error + SIGABRT). */
     private val encodeMutex = Mutex()
@@ -134,21 +121,13 @@ class XiaozhiMqttSessionManager(
     private val listenSendMutex = Mutex()
     @Volatile
     private var lastListenSentMs = 0L
-    /**
-     * Cooldown sau listen khi vẫn đang TTS/chưa qua ting.
-     * Sau ting: [pcmAllowedRightAfterTingUntilMs] bỏ qua cooldown này.
-     */
-    private val LISTEN_COOLDOWN_MS = 400L
-    /** Sau playTingRestartMicAndFinish – cho phép uplink ngay (chỉ còn [TING_ECHO_GUARD_MS]). */
-    @Volatile
-    private var pcmAllowedRightAfterTingUntilMs = 0L
+    /** Sau send listen: server cần vài trăm ms trước khi nhận Opus. */
+    private val LISTEN_COOLDOWN_MS = 300L
     @Volatile
     private var lastReconnectAttemptMs = 0L
     /** Đang reopen (hey mini / auto) – bỏ qua CLOSED giả do close có chủ ý; chặn PCM. */
     @Volatile
     private var reopenInProgress = false
-    private var wakeReconnectJob: Job? = null
-    private var channelBootstrapJob: Job? = null
     /** Lần cuối xử lý wake (full reopen hoặc reuse) – chống double onNewConversationTurn. */
     @Volatile
     private var lastWakeSessionHandledMs = 0L
@@ -174,23 +153,12 @@ class XiaozhiMqttSessionManager(
         if (reopenInProgress) return "đang reopen WS"
         if (suppressServerPcmUntilFirstGreetingDone) return "chờ TTS chào + ting"
         val now = System.currentTimeMillis()
-        if (isTtsPlaying) {
-            if (isTtsPlayingSinceMs != 0L && now - isTtsPlayingSinceMs > IS_TTS_PLAYING_MAX_MS) {
-                Log.w(TAG, "isTtsPlaying timeout ${now - isTtsPlayingSinceMs}ms – ép mở uplink PCM")
-                isTtsPlaying = false
-                isTtsPlayingSinceMs = 0L
-            } else {
-                return "TTS đang phát"
-            }
-        }
         if (now < suppressServerPcmForSkillUntilMs) return "skill/dance"
         if (now < suppressServerPcmAfterListenUntilMs) return "cooldown sau listen"
         if (!ensureChannelOpen()) return "WS chưa mở"
         if (lastListenSentMs == 0L) return "chưa gửi listen"
         val sinceListen = now - lastListenSentMs
-        if (sinceListen < LISTEN_COOLDOWN_MS && now > pcmAllowedRightAfterTingUntilMs) {
-            return "listen cooldown ${sinceListen}ms"
-        }
+        if (sinceListen < LISTEN_COOLDOWN_MS) return "listen cooldown ${sinceListen}ms"
         return null
     }
 
@@ -204,233 +172,56 @@ class XiaozhiMqttSessionManager(
 
     override fun isAcceptingServerPcm(): Boolean = canSendPcmNow()
 
-    private fun preparePlayerForGreetingTts() {
-        try {
-            player.prepareForIncomingTts()
-            Log.i(TAG, "[Greeting] prepareForIncomingTts – sẵn sàng nhận Opus chào")
-        } catch (e: Exception) {
-            Log.w(TAG, "prepareForIncomingTts", e)
-        }
-    }
-
-    private var greetingTimeoutJob: Job? = null
-
-    @Volatile
-    private var greetingTtsStarted = false
-
-    private fun cancelGreetingTimeout() {
-        greetingTimeoutJob?.cancel()
-        greetingTimeoutJob = null
-    }
-
-    private fun markGreetingTtsStarted() {
-        greetingTtsStarted = true
-        cancelGreetingTimeout()
-    }
-
-    /** Nếu server không gửi TTS sau wake – tránh kẹt im lặng (không cắt khi TTS đã start). */
-    /** Server hay goodbye nếu listen mà không nhận uplink – gửi Opus im lặng thay mic thật. */
-    private fun maybeSendUplinkKeepalive() {
-        val reason = pcmBlockReason() ?: return
-        if (reason != "TTS đang phát" && reason != "chờ TTS chào + ting") return
-        if (!protocol.isAudioChannelOpened() || lastListenSentMs == 0L) return
-        val now = System.currentTimeMillis()
-        if (now - lastUplinkKeepaliveMs < UPLINK_KEEPALIVE_INTERVAL_MS) return
-        lastUplinkKeepaliveMs = now
-        scope.launch {
-            try {
-                encodeMutex.withLock {
-                    if (!protocol.isAudioChannelOpened()) return@withLock
-                    val encoded = encoder.encode(UPLINK_SILENCE_PCM) ?: return@withLock
-                    protocol.sendAudio(encoded)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "uplink keepalive", e)
-            }
-        }
-    }
-
-    /** UDP/goodbye giữa TTS: phát hết buffer rồi reopen – không bắt user wake lại. */
-    private fun scheduleMidTtsDisconnectRecovery(trigger: String) {
-        if (midTtsDisconnectJob?.isActive == true) return
-        midTtsDisconnectJob = scope.launch {
-            Log.w(TAG, "[Session] $trigger – chờ buffer TTS xong rồi reopen")
-            ttsRecoveryGeneration++
-            try {
-                withTimeout(WAIT_PLAYBACK_TIMEOUT_MS) {
-                    player.waitForPlaybackCompletion()
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "mid-TTS playback wait", e)
-            }
-            pendingReconnectAfterTts = false
-            isTtsPlaying = false
-            isTtsPlayingSinceMs = 0L
-            val wasGreeting = suppressServerPcmUntilFirstGreetingDone
-            if (protocol.isAudioChannelOpened()) {
-                try {
-                    protocol.closeAudioChannel()
-                } catch (_: Exception) {
-                }
-                delay(200)
-            }
-            val ok = reopenChannelAndListen("sau ngắt giữa TTS")
-            if (ok) {
-                sessionClosedAwaitWake = false
-                channelIntentionallyStale = false
-                playTingRestartMicAndFinish(wasGreeting, afterRobotSkill = false, trigger)
-            } else {
-                sessionClosedAwaitWake = true
-                Log.w(TAG, "reopen sau ngắt giữa TTS fail – hey mini")
-            }
-        }
-    }
-
-    private fun scheduleGreetingTimeout() {
-        cancelGreetingTimeout()
-        greetingTtsStarted = false
-        greetingTimeoutJob = scope.launch {
-            delay(GREETING_NO_TTS_TIMEOUT_MS)
-            if (!suppressServerPcmUntilFirstGreetingDone) return@launch
-            if (greetingTtsStarted || isTtsPlaying) {
-                Log.d(TAG, "[Greeting] timeout bỏ qua – TTS chào đang/đã bắt đầu")
-                return@launch
-            }
-            if (!protocol.isAudioChannelOpened()) return@launch
-            Log.w(TAG, "[Greeting] ${GREETING_NO_TTS_TIMEOUT_MS}ms không có TTS – mở PCM (fallback)")
-            finishFirstGreetingPhase("MQTT greeting timeout", forceClear = true)
-            sendListenStartOnly("greeting timeout", ListeningMode.AUTO_STOP, forceRefresh = true)
-            armPcmUnblockAfterTing()
-            mainHandler.post { onTtsStoppedRestartMic?.invoke() }
-        }
-    }
-
     private fun finishFirstGreetingPhase(reason: String, forceClear: Boolean = false) {
         if (!forceClear && !suppressServerPcmUntilFirstGreetingDone) return
         suppressServerPcmUntilFirstGreetingDone = false
         heyMiniJustTriggered = false
-        cancelGreetingTimeout()
         Log.i(TAG, "[Greeting] $reason – mở gửi PCM + hey mini KWS (sau ting)")
         mainHandler.post { onFirstGreetingMicReady?.invoke() }
     }
 
-    /** Sau ting: chỉ guard echo ting ngắn, bỏ listen cooldown 1.5s+ (user nói ngay). */
-    private fun armPcmUnblockAfterTing(extraSettleMs: Long = 0L) {
-        val guardMs = TING_ECHO_GUARD_MS + extraSettleMs
-        suppressServerPcmAfterListenUntilMs = System.currentTimeMillis() + guardMs
-        pcmAllowedRightAfterTingUntilMs = System.currentTimeMillis() + 60_000L
-        Log.i(TAG, "[Mic] sau ting: uplink PCM sau ${guardMs}ms (ting xong là nói)")
-    }
-
-    /** Sau dance/skill: thêm settle AEC motor (vẫn ngắn hơn trước). */
+    /** Sau listen + ting (chỉ sau dance/skill): đợi mic/AEC ổn rồi mới gửi Opus. */
     private fun armPcmSettleAfterListen(extraMs: Long) {
-        armPcmUnblockAfterTing(extraMs)
+        suppressServerPcmAfterListenUntilMs = System.currentTimeMillis() + LISTEN_COOLDOWN_MS + extraMs
+        Log.i(TAG, "[Mic] settle ${LISTEN_COOLDOWN_MS + extraMs}ms sau ting (skill/dance)")
     }
 
     /**
-     * Mic restart → ting → listen → uplink gần như ngay (chỉ [TING_ECHO_GUARD_MS] chặn echo ting).
+     * Mic restart → ting → listen mới (sau mic ổn) → mở PCM.
+     * Listen trước ting dễ khiến server "nghe" trong lúc mic vừa stop/start → user nói sau ting không STT.
      */
     private suspend fun playTingRestartMicAndFinish(
         wasGreeting: Boolean,
         afterRobotSkill: Boolean,
         reason: String
     ) {
-        isTtsPlaying = true
-        isTtsPlayingSinceMs = System.currentTimeMillis()
-        Log.i(TAG, "[TTS] ting ngay ($reason)")
+        mainHandler.post { onTtsStoppedRestartMic?.invoke() }
+        delay(if (wasGreeting || afterRobotSkill) PRE_TING_MIC_WARMUP_MS else 150L)
         try {
             WakeupAudioPlayer.get(context).play()
         } catch (e: Exception) {
             Log.w(TAG, "Play mic-ready sound failed", e)
         }
-        mainHandler.post { onTtsStoppedRestartMic?.invoke() }
-        delay(if (wasGreeting || afterRobotSkill) PRE_TING_MIC_WARMUP_MS else 0L)
         finishFirstGreetingPhase(reason, forceClear = wasGreeting)
         if (!protocol.isAudioChannelOpened()) {
             Log.w(TAG, "playTingRestartMicAndFinish: WS đóng sau ting – không gửi listen/PCM")
             return
         }
-        sendListenStartOnly(
-            if (wasGreeting) "sau chào hey mini" else "sau ting",
-            ListeningMode.AUTO_STOP,
-            forceRefresh = true,
-        )
+        sendListenStartOnly("sau ting", ListeningMode.AUTO_STOP, forceRefresh = true)
         if (afterRobotSkill) {
             armPcmSettleAfterListen(SETTLE_AFTER_SKILL_MS)
         } else {
-            armPcmUnblockAfterTing()
-        }
-        isTtsPlaying = false
-        isTtsPlayingSinceMs = 0L
-        droppedFrameCount = 0L
-    }
-
-    /**
-     * Một luồng MQTT+UDP mới: teardown broker cũ → connect → MCP → hello → UDP → listen.
-     * Dùng cho hey mini và mọi lần cần mở lại khi kênh đã đóng.
-     */
-    private suspend fun openFreshMqttSessionAndListen(reason: String): Boolean {
-        val isHeyMini = reason.contains("hey mini", ignoreCase = true)
-        val deferMicRestart = reason.contains("sau skill", ignoreCase = true)
-            || reason.contains("sau TTS", ignoreCase = true)
-        return reconnectMutex.withLock {
-            reopenInProgress = true
-            isTtsPlaying = false
-            isTtsPlayingSinceMs = 0L
-            channelIntentionallyStale = false
-            sessionClosedAwaitWake = false
-            try {
-                val mqtt = protocol as MqttProtocol
-                Log.i(TAG, "openFreshMqttSession($reason): đóng UDP → connect (teardown nếu broker chết) → MCP → hello → UDP")
-                protocol.closeAudioChannel()
-                if (!mqtt.isBrokerConnected()) {
-                    mqtt.teardownForNewWake()
-                }
-                mqtt.prepareBootstrapHandshake()
-                if (!mqtt.ensureBrokerConnected()) {
-                    Log.e(TAG, "openFreshMqttSession: MQTT connect/subscribe fail")
-                    return@withLock false
-                }
-                XiaozhiMcpResponder.awaitInitializeResponded(8_000)
-                val res = protocol.openAudioChannel()
-                if (!res.success) {
-                    Log.e(TAG, "openFreshMqttSession: openAudioChannel fail")
-                    return@withLock false
-                }
-                resetSttActivityOnChannelReset()
-                if (isHeyMini) {
-                    preparePlayerForGreetingTts()
-                    protocol.sendWakeWordDetected("hey mini")
-                    delay(80)
-                    // Server thường chỉ đẩy Opus TTS qua UDP sau listen – uplink PCM vẫn chặn (suppress greeting).
-                    sendListenStartOnly("hey mini chào", ListeningMode.AUTO_STOP, forceRefresh = true)
-                    onWebSocketSessionReady?.invoke()
-                    scheduleGreetingTimeout()
-                    Log.i(
-                        TAG,
-                        "openFreshMqttSession(hey mini): wake detect + listen (downlink TTS); uplink PCM chặn đến sau ting",
-                    )
-                } else {
-                    sendListenStartOnly(reason, ListeningMode.AUTO_STOP, forceRefresh = false)
-                    onWebSocketSessionReady?.invoke()
-                    if (!deferMicRestart) {
-                        mainHandler.post { onTtsStoppedRestartMic?.invoke() }
-                    }
-                }
-                Log.i(TAG, "openFreshMqttSession OK ($reason)")
-                true
-            } catch (e: Exception) {
-                Log.e(TAG, "openFreshMqttSession($reason) error: ${e.message}", e)
-                false
-            } finally {
-                reopenInProgress = false
-            }
+            suppressServerPcmAfterListenUntilMs =
+                System.currentTimeMillis() + LISTEN_COOLDOWN_MS + POST_TING_PCM_DELAY_MS
+            Log.i(
+                TAG,
+                "[STT flow] sau ting: listen mới + PCM sau ${LISTEN_COOLDOWN_MS + POST_TING_PCM_DELAY_MS}ms"
+            )
         }
     }
 
     /**
-     * Trong cùng phiên: kênh UDP còn → chỉ listen.
-     * Hey mini / kênh đóng → luồng MQTT mới (không reuse broker).
+     * Giống Xiaozhi_Android ChatViewModel: kênh mở → listen; kênh đóng → openAudioChannel().
      */
     private suspend fun reopenChannelAndListen(reason: String): Boolean {
         val isHeyMini = reason.contains("hey mini", ignoreCase = true)
@@ -438,23 +229,83 @@ class XiaozhiMqttSessionManager(
             Log.i(TAG, "reopenChannelAndListen($reason) bỏ qua – cần hey mini / chạm đầu")
             return false
         }
-        if (isHeyMini || !protocol.isAudioChannelOpened()) {
-            return openFreshMqttSessionAndListen(reason)
-        }
         val deferMicRestart = reason.contains("sau skill", ignoreCase = true)
             || reason.contains("sau TTS", ignoreCase = true)
         return reconnectMutex.withLock {
             reopenInProgress = true
+            val now = System.currentTimeMillis()
+            if (protocol.isAudioChannelOpened() && lastListenSentMs != 0L
+                && now - lastListenSentMs < 15_000L && reason.contains("auto reconnect")
+            ) {
+                reopenInProgress = false
+                return@withLock true
+            }
+            if (reason.contains("auto reconnect") && now - lastReconnectAttemptMs < RECONNECT_THROTTLE_MS) {
+                reopenInProgress = false
+                return@withLock false
+            }
+            lastReconnectAttemptMs = now
+            isTtsPlaying = false
+            isTtsPlayingSinceMs = 0L
+            channelIntentionallyStale = false
+            sessionClosedAwaitWake = false
             try {
-                Log.i(TAG, "reopenChannelAndListen($reason): kênh còn – chỉ listen")
-                sendListenStartOnly(reason, ListeningMode.AUTO_STOP, forceRefresh = false)
-                if (!deferMicRestart) {
+                if (protocol.isAudioChannelOpened()) {
+                    Log.i(TAG, "reopenChannelAndListen($reason): WS đã mở – listen")
+                    if (isHeyMini) {
+                        protocol.sendWakeWordDetected("hey mini")
+                        delay(80)
+                    }
+                    sendListenStartOnly(reason, ListeningMode.AUTO_STOP, forceRefresh = isHeyMini)
+                    if (!isHeyMini && !deferMicRestart) {
+                        mainHandler.post { onTtsStoppedRestartMic?.invoke() }
+                    }
+                    return@withLock true
+                }
+                Log.i(TAG, "reopenChannelAndListen($reason): openAudioChannel")
+                val res = protocol.openAudioChannel()
+                if (!res.success) {
+                    Log.w(TAG, "reopenChannelAndListen($reason): openAudioChannel failed")
+                    return@withLock false
+                }
+                XiaozhiMcpResponder.awaitInitializeResponded()
+                resetSttActivityOnChannelReset()
+                onWebSocketSessionReady?.invoke()
+                if (isHeyMini) {
+                    protocol.sendWakeWordDetected("hey mini")
+                    delay(80)
+                }
+                sendListenStartOnly(reason, ListeningMode.AUTO_STOP)
+                if (!isHeyMini && !deferMicRestart) {
                     mainHandler.post { onTtsStoppedRestartMic?.invoke() }
                 }
                 true
+            } catch (e: Exception) {
+                Log.e(TAG, "reopenChannelAndListen($reason) error: " + e.message, e)
+                false
             } finally {
                 reopenInProgress = false
             }
+        }
+    }
+
+    private suspend fun bootstrapChannelLikeReference() {
+        try {
+            protocol.start()
+            Log.i(TAG, "[init] WebSocket → openAudioChannel (giống ChatViewModel)")
+            val res = protocol.openAudioChannel()
+            if (!res.success) {
+                Log.e(TAG, "[init] openAudioChannel failed")
+                return
+            }
+            XiaozhiMcpResponder.awaitInitializeResponded()
+            sessionClosedAwaitWake = false
+            channelIntentionallyStale = false
+            sendListenStartOnly("init", ListeningMode.AUTO_STOP)
+            onWebSocketSessionReady?.invoke()
+            Log.i(TAG, "[init] WebSocket channel OK")
+        } catch (e: Exception) {
+            Log.e(TAG, "[init] bootstrap: ${e.message}", e)
         }
     }
 
@@ -515,45 +366,15 @@ class XiaozhiMqttSessionManager(
     }
 
     init {
-        protocol.shouldDeferGoodbye = {
-            val defer = isTtsPlaying || suppressServerPcmUntilFirstGreetingDone
-            if (defer) {
-                pendingReconnectAfterTts = true
-                Log.w(TAG, "[Session] defer MQTT goodbye – chờ buffer TTS xong rồi reopen")
-                scheduleMidTtsDisconnectRecovery("MQTT goodbye deferred")
-            }
-            defer
-        }
         MiniRobotActionInvoker.setXiaozhiWireIdentities(deviceId, clientId)
-        // Không connect MQTT lúc init — tránh TLS/handshake nền; chỉ mở khi hey mini / wake.
-        channelBootstrapJob = scope.launch {
-            Log.i(TAG, "[init] MQTT idle – chờ hey mini / chạm đầu để mở luồng mới")
-            sessionClosedAwaitWake = true
+        scope.launch {
+            bootstrapChannelLikeReference()
         }
-        // Player + JSON (giống ChatViewModel sau khi mở kênh).
         scope.launch {
             try {
                 var pcmFlow = flow {
-                    var decodeNulls = 0
-                    var decodeOk = 0
                     protocol.incomingAudioFlow.collect { opus: ByteArray ->
-                        if (opus.isEmpty()) {
-                            emit(TTS_FRAME_LOSS_SILENCE_PCM)
-                            return@collect
-                        }
-                        val pcm = decoder.decode(opus)
-                        if (pcm == null) {
-                            decodeNulls++
-                            if (decodeNulls <= 5 || decodeNulls % 50 == 0) {
-                                Log.w(TAG, "[TTS] decode null #$decodeNulls opusLen=${opus.size}")
-                            }
-                        } else {
-                            decodeOk++
-                            if (decodeOk <= 3 || decodeOk % 100 == 0) {
-                                Log.i(TAG, "[TTS] decode OK #$decodeOk pcm=${pcm.size}B opus=${opus.size}B")
-                            }
-                            emit(pcm)
-                        }
+                        decoder.decode(opus)?.let { emit(it) }
                     }
                 }
                 if (pcmGain > 1f) {
@@ -577,16 +398,12 @@ class XiaozhiMqttSessionManager(
                 protocol.incomingJsonFlow.collect { json: JSONObject ->
                     val type = json.optString("type")
                     val sid = json.optString("session_id", "")
-                    Log.i(TAG, "[MQTT→] type=$type session_id=${sid.take(8)}… – luồng STT: server gửi gì ta đều log")
+                    Log.i(TAG, "[WS→] type=$type session_id=${sid.take(8)}… – luồng STT: server gửi gì ta đều log")
                     when (type) {
                         "stt" -> {
-                            val text = json.optString("text", "")
-                            if (suppressServerPcmUntilFirstGreetingDone) {
-                                Log.w(TAG, "[STT] bỏ qua trong lúc chào (echo/wake): \"$text\"")
-                                return@collect
-                            }
                             lastSttReceivedMs = System.currentTimeMillis()
                             noSttListenOnlyAttempts = 0
+                            val text = json.optString("text", "")
                             Log.i(TAG, "[STT] Server trả STT: text=\"$text\" – nếu không thấy khi nói = server không trả lời")
                             if (isLikelySessionEndStt(text)) {
                                 sessionClosedAwaitWake = true
@@ -595,23 +412,18 @@ class XiaozhiMqttSessionManager(
                             // Skill robot chỉ qua MCP tools/call — không khớp keyword STT (tránh chạy 2 lần).
                         }
                         "mcp" -> {
-                            try {
-                                XiaozhiMcpResponder.handleIncomingMcp(json, protocol)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "MCP responder: ${e.message}", e)
+                            scope.launch {
+                                try {
+                                    XiaozhiMcpResponder.handleIncomingMcp(json, protocol)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "MCP responder: ${e.message}", e)
+                                }
                             }
                         }
                         "iot" -> {
                             MiniRobotActionInvoker.dispatchFromXiaozhiJson(json)
                         }
                         "llm" -> {
-                            if (suppressServerPcmUntilFirstGreetingDone) {
-                                Log.w(
-                                    TAG,
-                                    "[LLM] bỏ qua emotion trong lúc chào: ${json.optString("emotion", "")}",
-                                )
-                                return@collect
-                            }
                             val emotion = json.optString("emotion", "").trim()
                             if (emotion.isNotEmpty()) {
                                 Log.i(TAG, "[LLM] emotion=\"$emotion\" → skill ROM (vừa nói vừa hành động)")
@@ -619,7 +431,6 @@ class XiaozhiMqttSessionManager(
                             }
                         }
                         "alert" -> {
-                            if (suppressServerPcmUntilFirstGreetingDone) return@collect
                             val emotion = json.optString("emotion", "").trim()
                             if (emotion.isNotEmpty()) {
                                 MiniRobotActionInvoker.applyLlmEmotionFromServer(emotion)
@@ -631,12 +442,7 @@ class XiaozhiMqttSessionManager(
                         when (json.optString("state")) {
                             "start" -> {
                                 if (heyMiniJustTriggered && suppressServerPcmUntilFirstGreetingDone) {
-                                    markGreetingTtsStarted()
-                                    isTtsPlaying = true
-                                    isTtsPlayingSinceMs = System.currentTimeMillis()
-                                    preparePlayerForGreetingTts()
                                     onTtsStarted?.invoke()
-                                    Log.i(TAG, "[TTS] chào bắt đầu (hey mini)")
                                     return@collect
                                 }
                                 if (heyMiniJustTriggered) return@collect
@@ -648,16 +454,7 @@ class XiaozhiMqttSessionManager(
                                 }
                             }
                             "sentence_start" -> {
-                                val ttsText = json.optString("text", "").trim()
-                                if (ttsText.isNotEmpty()) {
-                                    Log.i(TAG, "[TTS] << $ttsText")
-                                }
-                                if (heyMiniJustTriggered && suppressServerPcmUntilFirstGreetingDone) {
-                                    markGreetingTtsStarted()
-                                    isTtsPlaying = true
-                                    isTtsPlayingSinceMs = System.currentTimeMillis()
-                                    return@collect
-                                }
+                                if (heyMiniJustTriggered && suppressServerPcmUntilFirstGreetingDone) return@collect
                                 if (heyMiniJustTriggered) return@collect
                                 if (lastTtsStopClearedAt != 0L && System.currentTimeMillis() - lastTtsStopClearedAt < TTS_STOP_COOLDOWN_MS) {
                                     Log.d(TAG, "Bỏ qua sentence_start trễ (${System.currentTimeMillis() - lastTtsStopClearedAt}ms < ${TTS_STOP_COOLDOWN_MS}ms) – event cũ")
@@ -682,7 +479,6 @@ class XiaozhiMqttSessionManager(
                                 }
                                 val recoveryGen = ++ttsRecoveryGeneration
                                 scope.launch ttsRecovery@{
-                                    val ttsStopAt = System.currentTimeMillis()
                                     delay(MIC_DELAY_MS_AFTER_TTS)
                                     try {
                                         withTimeout(WAIT_PLAYBACK_TIMEOUT_MS) {
@@ -694,10 +490,6 @@ class XiaozhiMqttSessionManager(
                                         Log.w(TAG, "waitForPlaybackCompletion", e)
                                     }
                                     delay(DELAY_AFTER_PLAYBACK_BEFORE_MIC_MS)
-                                    Log.i(
-                                        TAG,
-                                        "[TTS] playback drain xong, ting sau ${System.currentTimeMillis() - ttsStopAt}ms từ tts stop",
-                                    )
                                     if (recoveryGen != ttsRecoveryGeneration) {
                                         Log.i(TAG, "TTS recovery bị hủy (WS đóng giữa chừng) – không gửi listen; nói hey mini hoặc chạm đầu")
                                         isTtsPlaying = false
@@ -707,22 +499,27 @@ class XiaozhiMqttSessionManager(
                                         return@ttsRecovery
                                     }
                                     val wasGreeting = suppressServerPcmUntilFirstGreetingDone
-                                    lastTtsStopClearedAt = System.currentTimeMillis()
                                     if (longTts || afterRobotSkill) {
                                         refreshSessionAfterNextTtsStop = false
                                         suppressServerPcmForSkillUntilMs = 0L
                                         val reason = if (longTts) "sau TTS dài" else "sau skill robot"
                                         val ok = reopenChannelAndListen(reason)
+                                        isTtsPlaying = false
+                                        isTtsPlayingSinceMs = 0L
+                                        droppedFrameCount = 0L
+                                        lastTtsStopClearedAt = System.currentTimeMillis()
                                         if (ok) {
                                             playTingRestartMicAndFinish(wasGreeting, afterRobotSkill, "$reason + reopen")
                                         } else {
-                                            isTtsPlaying = false
-                                            isTtsPlayingSinceMs = 0L
                                             Log.w(TAG, "reopen $reason không success – nói hey mini để mở lại")
                                             finishFirstGreetingPhase("$reason reopen fail")
                                             mainHandler.post { onTtsStoppedRestartMic?.invoke() }
                                         }
                                     } else if (protocol.isAudioChannelOpened()) {
+                                        isTtsPlaying = false
+                                        isTtsPlayingSinceMs = 0L
+                                        droppedFrameCount = 0L
+                                        lastTtsStopClearedAt = System.currentTimeMillis()
                                         Log.i(TAG, "[STT flow] Sau TTS: listen → restart mic → ting (lần nói đầu sau ting)")
                                         playTingRestartMicAndFinish(wasGreeting, afterRobotSkill = false, "sau TTS stop + listen")
                                     } else {
@@ -755,28 +552,21 @@ class XiaozhiMqttSessionManager(
                 protocol.audioChannelStateFlow.collect { state ->
                     if (state == AudioState.CLOSED) {
                         lastAudioChannelClosedMs = System.currentTimeMillis()
-                        if (!reopenInProgress && (isTtsPlaying || pendingReconnectAfterTts)) {
-                            Log.w(TAG, "MQTT/UDP đóng giữa TTS – không kẹt wake, sẽ reopen sau buffer")
-                            scheduleMidTtsDisconnectRecovery("UDP CLOSED giữa TTS")
-                            return@collect
-                        }
                         channelIntentionallyStale = true
                         isTtsPlaying = false
                         isTtsPlayingSinceMs = 0L
                         lastTtsStopClearedAt = 0L
                         ttsRecoveryGeneration++
-                        pendingReconnectAfterTts = false
                         if (!reopenInProgress) {
                             sessionClosedAwaitWake = true
                             suppressServerPcmUntilFirstGreetingDone = false
-                            cancelGreetingTimeout()
                             heyMiniJustTriggered = false
                             lastListenSentMs = 0L
                             sendFrameCount = 0L
-                            Log.i(TAG, "MQTT/UDP đóng – chờ hey mini (mở lại hello/UDP, không ngắt broker nền)")
+                            Log.i(TAG, "WebSocket closed – chờ hey mini / chạm đầu (không tự mở lại)")
                             scheduleListenWatchdogIfIdle()
                         } else {
-                            Log.d(TAG, "UDP đóng tạm (reopen) – giữ suppress/greeting + heyMini flags")
+                            Log.d(TAG, "WebSocket closed (reopen) – giữ suppress/greeting + heyMini flags")
                         }
                     }
                 }
@@ -898,8 +688,8 @@ class XiaozhiMqttSessionManager(
         val now = System.currentTimeMillis()
         if (!forceReconnect && now - lastWakeSessionHandledMs < WAKE_SESSION_DEBOUNCE_MS) {
             if (!protocol.isAudioChannelOpened()) {
-                Log.i(TAG, "[WakeWord] debounced nhưng kênh đóng – chờ bootstrap / mở kênh")
-                scope.launch { awaitBootstrapThenWake() }
+                Log.i(TAG, "[WakeWord] debounced nhưng kênh đóng – vẫn performFullWakeReconnect")
+                performFullWakeReconnect()
             } else {
                 Log.i(TAG, "[WakeWord] debounced (${now - lastWakeSessionHandledMs}ms) – bỏ wake trùng (handleWakeup + startRecognizing)")
                 mainHandler.post { onTtsStoppedRestartMic?.invoke() }
@@ -907,21 +697,27 @@ class XiaozhiMqttSessionManager(
             return
         }
         lastWakeSessionHandledMs = now
-        scope.launch { awaitBootstrapThenWake() }
-    }
-
-    /** Hey mini: luôn một luồng MQTT+UDP mới (không reuse session cũ). */
-    private suspend fun awaitBootstrapThenWake() {
-        try {
-            channelBootstrapJob?.join()
-        } catch (_: Exception) {
+        if (protocol.isAudioChannelOpened() && !forceReconnect) {
+            Log.i(TAG, "[WakeWord] WS đã mở – listen (ChatViewModel)")
+            scope.launch {
+                sessionClosedAwaitWake = false
+                suppressServerPcmUntilFirstGreetingDone = true
+                heyMiniJustTriggered = true
+                try {
+                    player.interruptPlayback()
+                } catch (e: Exception) {
+                    Log.w(TAG, "player.interruptPlayback", e)
+                }
+                protocol.sendWakeWordDetected("hey mini")
+                delay(80)
+                sendListenStartOnly("hey mini", ListeningMode.AUTO_STOP, forceRefresh = true)
+                mainHandler.post { onTtsStoppedRestartMic?.invoke() }
+            }
+            return
         }
-        suppressServerPcmUntilFirstGreetingDone = true
-        heyMiniJustTriggered = true
         performFullWakeReconnect()
     }
 
-    /** Kênh đóng: mở lại giống ChatViewModel.startListening. */
     override fun onNewConversationTurn() {
         scope.launch {
             if (protocol.isAudioChannelOpened()) {
@@ -933,12 +729,8 @@ class XiaozhiMqttSessionManager(
     }
 
     private fun performFullWakeReconnect() {
-        if (wakeReconnectJob?.isActive == true) {
-            Log.i(TAG, "[WakeWord] performFullWakeReconnect đang chạy – bỏ duplicate")
-            return
-        }
-        Log.i(TAG, "[WakeWord] performFullWakeReconnect – open/listen nếu kênh đóng")
-        wakeReconnectJob = scope.launch {
+        Log.i(TAG, "[WakeWord] performFullWakeReconnect – open/listen nếu WS đóng")
+        scope.launch {
             try {
                 sessionClosedAwaitWake = false
                 channelIntentionallyStale = false
@@ -947,16 +739,20 @@ class XiaozhiMqttSessionManager(
                 lastTtsStopClearedAt = 0L
                 suppressServerPcmUntilFirstGreetingDone = true
                 heyMiniJustTriggered = true
-                Log.i(TAG, "[Greeting] chặn uplink PCM; listen ngay sau wake (server cần để gửi Opus TTS)")
+                Log.i(TAG, "[Greeting] chặn PCM lên server đến khi TTS chào xong (tránh echo lần đầu)")
+                try {
+                    player.interruptPlayback()
+                } catch (e: Exception) {
+                    Log.w(TAG, "player.interruptPlayback", e)
+                }
                 val ok = reopenChannelAndListen("hey mini")
                 if (!ok) {
                     Log.e(TAG, "Hey mini reopenChannelAndListen failed")
                     heyMiniJustTriggered = false
                     suppressServerPcmUntilFirstGreetingDone = false
-                    cancelGreetingTimeout()
                     return@launch
                 }
-                Log.i(TAG, "[WakeWord] Hey mini: MQTT+UDP OK – chờ TTS chào + Opus UDP")
+                Log.i(TAG, "[WakeWord] Hey mini: WS + listen OK – chờ TTS chào xong mới gửi PCM server (mic local/KWS vẫn chạy)")
             } catch (e: Exception) {
                 Log.e(TAG, "performFullWakeReconnect error: ${e.message}", e)
                 heyMiniJustTriggered = false
@@ -973,7 +769,8 @@ class XiaozhiMqttSessionManager(
 
     override fun sendPcmFrameFromJava(frame: ByteArray) {
         if (frame.isEmpty()) return
-        // Chặn uplink khi TTS + cooldown sau ting (pcmBlockReason) – tránh echo STT tự nói tự nghe.
+        // Giống Xiaozhi_Android: LUÔN gửi audio lên server (không chặn khi TTS). Server nhận stream liên tục → sau TTS dài vẫn STT bình thường. Echo nhờ AEC (cùng audioSessionId với TTS).
+        // (Trước đây chặn khi isTtsPlaying → server nhận 0 byte vài phút → dễ idle/không trả STT khi gửi lại.)
 
         scope.launch {
             try {
@@ -985,12 +782,9 @@ class XiaozhiMqttSessionManager(
                             Log.w(TAG, "sendPcmFrameFromJava: kênh chưa mở – nói hey mini / chạm đầu")
                         }
                         scheduleListenWatchdogIfIdle()
-                    } else {
-                        maybeSendUplinkKeepalive()
-                        if (now - lastPcmBlockedLogMs >= DROP_LOG_INTERVAL_MS) {
-                            lastPcmBlockedLogMs = now
-                            Log.w(TAG, "sendPcmFrameFromJava: WS mở nhưng chặn PCM – ${pcmBlockReason()}")
-                        }
+                    } else if (now - lastPcmBlockedLogMs >= DROP_LOG_INTERVAL_MS) {
+                        lastPcmBlockedLogMs = now
+                        Log.w(TAG, "sendPcmFrameFromJava: WS mở nhưng chặn PCM – ${pcmBlockReason()}")
                     }
                     return@launch
                 }
@@ -1049,11 +843,12 @@ class XiaozhiMqttSessionManager(
     }
 
     override fun dispose() {
+
         try { player.shutdown() } catch (e: Exception) {}
         try { encoder.release() } catch (e: Exception) {}
         try { decoder.release() } catch (e: Exception) {}
         try { protocol.dispose() } catch (e: Exception) {}
-        XiaozhiMcpResponder.resetInitializeHandshake()
+
         scope.cancel()
     }
 }

@@ -84,10 +84,6 @@ object DemoSpeech : SpeechModuleFactory() {
     private var wakeUpDetectorRef: SherpaOnnxWakeUpDetector? = null
     private var xiaozhiSessionRef: XiaozhiSessionManager? = null
     private var xiaozhiAudioSessionId: Int = 0
-    @Volatile
-    private var localReadySignaled: Boolean = false
-    @Volatile
-    private var onlineReadySignaled: Boolean = false
     /** Hey mini / chạm đầu vừa xảy ra — dùng khi OTA swap transport hủy wake giữa chừng. */
     @Volatile
     private var lastWakeAtMs: Long = 0L
@@ -299,32 +295,6 @@ object DemoSpeech : SpeechModuleFactory() {
                     xiaozhiAudioSessionId = audioSessionId
                     val xiaozhi = createXiaozhiSessionManager(audioSessionId)
                     xiaozhiSessionRef = xiaozhi
-                    // Ready mức 2 (online): session manager sẽ callback sau khi kênh đã mở + listen đã gửi.
-                    xiaozhi?.setOnWebSocketSessionReady {
-                        if (onlineReadySignaled) return@setOnWebSocketSessionReady
-                        onlineReadySignaled = true
-                        Handler(Looper.getMainLooper()).post {
-                            try {
-                                // 2 beep/ting báo "online ready"
-                                WakeupAudioPlayer.get(appContext).play()
-                                Handler(Looper.getMainLooper()).postDelayed({
-                                    try {
-                                        WakeupAudioPlayer.get(appContext).play()
-                                    } catch (_: Exception) {
-                                    }
-                                }, 160L)
-                            } catch (_: Exception) {
-                            }
-                        }
-                        ThreadPool.runOnNonUIThread {
-                            try {
-                                LogUtils.i(TAG, "[Ready] Online ready → StandUp")
-                                MiniRobotActionInvoker.performStandUpSync()
-                            } catch (e: Exception) {
-                                LogUtils.w(TAG, "StandUp on online-ready: ${e.message}")
-                            }
-                        }
-                    }
                     val opusLabel = when {
                         xiaozhi == null -> "NULL (Opus init fail)"
                         NativeOpusBootstrap.isNativeAvailable() ->
@@ -351,19 +321,22 @@ object DemoSpeech : SpeechModuleFactory() {
                     if (kwsReady) {
                         (recognizer as? DemoRecognizer)?.startMicForWakeWord()
                         LogUtils.i(TAG, "[WakeWord] mic started – sherpa ready, say HEY MINI")
-                        // Ready mức 1 (local): KWS + head-touch đã đăng ký, báo 1 beep ngắn.
-                        if (!localReadySignaled) {
-                            localReadySignaled = true
-                            Handler(Looper.getMainLooper()).post {
-                                try {
-                                    WakeupAudioPlayer.get(appContext).play()
-                                } catch (_: Exception) {
-                                }
-                            }
-                        }
                     } else {
                         LogUtils.e(TAG, "[WakeWord] sherpa not ready – mic NOT started (check sherpa-kws ONNX bundle)")
                     }
+                    // Đứng khởi động: gọi SAU khi mic + sherpa KWS đã bật; StandUp trên worker; sau đó start() wake lại
+                    // (tránh race với MainActivity + tránh wake "câm" sau động cơ — xem XIAOZHI_ANDROID_VS_OUR_LOGIC.md).
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        ThreadPool.runOnNonUIThread {
+                            try {
+                                LogUtils.i(TAG, "[WakeWord] Initial StandUpApi (sau mic/sherpa KWS, worker thread)")
+                                MiniRobotActionInvoker.performStandUpSync()
+                            } catch (e: Exception) {
+                                LogUtils.w(TAG, "Initial stand: ${e.message}")
+                            }
+                            // KWS already started above; avoid second start() racing on SherpaKwsWorker
+                        }
+                    }, 2500L)
                     LogUtils.i("init success (background).")
 
                     // Publish events on main thread (framework may require it)

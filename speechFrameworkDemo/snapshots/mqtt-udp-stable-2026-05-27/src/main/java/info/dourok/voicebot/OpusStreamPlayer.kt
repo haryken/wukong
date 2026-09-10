@@ -30,8 +30,7 @@ class OpusStreamPlayer(
     companion object {
         private const val TAG = "OpusStreamPlayer"
         private const val TRACK_BUFFER_MULTIPLIER = 4
-        /** 2× frame TTS 60ms — khớp MQTT UDP_JITTER_FRAMES. */
-        private const val PREBUFFER_MS = 120
+        private const val PREBUFFER_MS = 100
         private const val WRITE_CHUNK_MS = 30
         private const val PLAYBACK_VOLUME = 0.85f
     }

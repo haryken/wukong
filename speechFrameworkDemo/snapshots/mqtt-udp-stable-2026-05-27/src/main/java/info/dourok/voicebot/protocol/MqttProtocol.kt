@@ -28,7 +28,6 @@ import org.eclipse.paho.client.mqttv3.MqttException
 import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.json.JSONObject
 import java.net.DatagramPacket
-import java.util.TreeMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -100,10 +99,6 @@ class MqttProtocol(
         val UDP_FRAME_LOSS_PACKET: ByteArray = ByteArray(0)
         /** Khớp mqtt_protocol.cc: std::min(missing, 8) frame_loss trước packet hiện tại. */
         private const val UDP_GAP_FILL_MAX = 8
-        /** Luôn giữ ~2 frame trước khi đẩy Opus ra loa (jitter + chờ reorder). */
-        private const val UDP_JITTER_FRAMES = 2
-        /** Chờ tối đa 2×60ms khi thiếu 1–2 seq (gói UDP tới lệch thứ tự). */
-        private const val UDP_REORDER_WAIT_MS = 120L
 
         private fun readUint16Be(data: ByteArray, offset: Int): Int =
             ((data[offset].toInt() and 0xff) shl 8) or (data[offset + 1].toInt() and 0xff)
@@ -142,15 +137,6 @@ class MqttProtocol(
     private var lastUdpRxDropLogMs = 0L
     private val udpRxChannel = Channel<ByteArray>(UDP_RX_CHANNEL_CAPACITY)
     private var udpRxWorkerJob: Job? = null
-    /** Raw UDP chờ đúng thứ tự seq (reorder). */
-    private val pendingRawBySeq = TreeMap<Long, ByteArray>()
-    /** Opus đã decrypt, chờ playout lag [UDP_JITTER_FRAMES]. */
-    private val playoutBySeq = TreeMap<Long, List<ByteArray>>()
-    private var playoutHighSeq = 0L
-    private var reorderWaitJob: Job? = null
-    @Volatile
-    private var reorderWaitForSeq: Long = 0L
-    private val reorderWaitExpired = mutableSetOf<Long>()
 
     private fun shouldLogUdpFrame(count: Long): Boolean =
         count <= UDP_LOG_FIRST_N || count % UDP_LOG_EVERY_N == 0L
@@ -762,7 +748,6 @@ class MqttProtocol(
         udpTxCount = 0
         udpRxCount = 0
         lastUdpGapLogMs = 0L
-        resetUdpJitterState()
         udpTimestampBaseMs = System.currentTimeMillis()
 
         val ap = json.optJSONObject("audio_params")
@@ -771,7 +756,6 @@ class MqttProtocol(
             "MQTT_UDP open session=$sessionId ${udp.optString("server")}:${udp.optInt("port")} " +
                 "server_audio format=${ap?.optString("format")} rate=${ap?.optInt("sample_rate")} " +
                 "ch=${ap?.optInt("channels")} frame_ms=${ap?.optInt("frame_duration")} " +
-                "jitter=${UDP_JITTER_FRAMES}f reorder_wait=${UDP_REORDER_WAIT_MS}ms " +
                 "template=${formatUdpAudioHeader(aesNonce)}",
         )
 
@@ -789,24 +773,11 @@ class MqttProtocol(
     }
 
     private fun stopUdpRxWorker() {
-        flushPlayoutBuffer(force = true)
-        reorderWaitJob?.cancel()
-        reorderWaitJob = null
-        reorderWaitForSeq = 0L
-        resetUdpJitterState()
         udpRxWorkerJob?.cancel()
         udpRxWorkerJob = null
         while (udpRxChannel.tryReceive().isSuccess) {
             // drain stale packets between sessions
         }
-    }
-
-    private fun resetUdpJitterState() {
-        pendingRawBySeq.clear()
-        playoutBySeq.clear()
-        playoutHighSeq = 0L
-        reorderWaitExpired.clear()
-        reorderWaitForSeq = 0L
     }
 
     private fun startUdpRxWorker() {
@@ -844,7 +815,10 @@ class MqttProtocol(
         }
     }
 
-    /** Enqueue theo seq → drain tuần tự → playout luôn trễ [UDP_JITTER_FRAMES] frame. */
+    /**
+     * Khớp xiaozhi-esp32-main2 mqtt_protocol.cc (dòng 266–306):
+     * gap → tối đa 8× frame_loss (im lặng) trước khi decode packet hiện tại; remote_sequence = sequence.
+     */
     private suspend fun processUdpAudioPacketOrdered(data: ByteArray) {
         if (data.size < aesNonce.size) {
             Log.w(TAG, "MQTT_UDP RX invalid size=${data.size} (need >=16)")
@@ -855,123 +829,39 @@ class MqttProtocol(
             Log.e(TAG, "MQTT_UDP RX invalid type=0x${type.toString(16)} ${formatUdpAudioHeader(data)}")
             return
         }
+        val headerLen = readUint16Be(data, 2)
         val sequence = readUint32Be(data, 12)
-        if (remoteSequence != 0L && sequence <= remoteSequence) {
+        if (sequence < remoteSequence) {
             Log.w(
                 TAG,
                 "MQTT_UDP RX drop old seq=$sequence last=$remoteSequence ${formatUdpAudioHeader(data)}",
             )
             return
         }
-        pendingRawBySeq[sequence] = data
-        drainUdpInOrder()
-    }
 
-    /**
-     * Xử lý seq liên tiếp; gap ≤2 frame chờ reorder; gap lớn → frame_loss (ESP32).
-     */
-    private suspend fun drainUdpInOrder() {
-        while (true) {
-            val next = if (remoteSequence == 0L) {
-                pendingRawBySeq.keys.firstOrNull() ?: return
-            } else {
-                remoteSequence + 1
-            }
-            val raw = pendingRawBySeq[next]
-            if (raw != null) {
-                pendingRawBySeq.remove(next)
-                reorderWaitExpired.remove(next)
-                commitUdpSequence(next, decryptUdpAudioPacket(raw))
-                continue
-            }
-            val minPending = pendingRawBySeq.keys.firstOrNull() ?: return
-            if (minPending <= next) return
-            val gap = minPending - next
-            if (gap <= UDP_JITTER_FRAMES && !reorderWaitExpired.contains(next)) {
-                if (scheduleReorderWait(next)) {
-                    return
-                }
-                if (reorderWaitForSeq == next) {
-                    return
-                }
-            }
+        val toEmit = mutableListOf<ByteArray>()
+        if (remoteSequence != 0L && sequence != remoteSequence + 1) {
+            val expected = remoteSequence + 1
+            val missing = sequence - expected
             val now = System.currentTimeMillis()
             if (now - lastUdpGapLogMs >= UDP_GAP_LOG_INTERVAL_MS) {
                 lastUdpGapLogMs = now
                 Log.w(
                     TAG,
-                    "MQTT_UDP RX gap (sau reorder ${UDP_REORDER_WAIT_MS}ms): seq=$next chưa tới, có min=$minPending ($gap frame)",
+                    "MQTT_UDP RX gap: got seq=$sequence expected=$expected ($missing frame(s) missing)",
                 )
             }
-            val fill = minOf(gap, UDP_GAP_FILL_MAX.toLong()).toInt()
-            repeat(fill) { i ->
-                val lossSeq = next + i
-                if (lossSeq == next) {
-                    Log.i(
-                        TAG,
-                        if (fill == 1) {
-                            "MQTT_UDP RX frame_loss: 1 frame im lặng (sau reorder wait)"
-                        } else {
-                            "MQTT_UDP RX frame_loss: $fill/$gap frame im lặng (ESP32 max $UDP_GAP_FILL_MAX)"
-                        },
-                    )
+            if (missing > 0) {
+                val fill = minOf(missing, UDP_GAP_FILL_MAX.toLong()).toInt()
+                repeat(fill) { toEmit.add(UDP_FRAME_LOSS_PACKET) }
+                if (fill == 1) {
+                    Log.i(TAG, "MQTT_UDP RX frame_loss: 1 frame im lặng (ESP32)")
+                } else {
+                    Log.i(TAG, "MQTT_UDP RX frame_loss: $fill/$missing frame im lặng (ESP32 max $UDP_GAP_FILL_MAX)")
                 }
-                commitUdpSequence(lossSeq, listOf(UDP_FRAME_LOSS_PACKET))
             }
         }
-    }
 
-    /** @return true nếu vừa bắt đầu chờ reorder mới. */
-    private fun scheduleReorderWait(expectedSeq: Long): Boolean {
-        if (reorderWaitJob?.isActive == true) {
-            if (reorderWaitForSeq == expectedSeq) return false
-            reorderWaitJob?.cancel()
-        }
-        reorderWaitForSeq = expectedSeq
-        Log.i(
-            TAG,
-            "MQTT_UDP RX reorder wait: chờ seq=$expectedSeq (${UDP_REORDER_WAIT_MS}ms, có min=${pendingRawBySeq.keys.firstOrNull()})",
-        )
-        reorderWaitJob = scope.launch {
-            delay(UDP_REORDER_WAIT_MS)
-            reorderWaitForSeq = 0L
-            if (pendingRawBySeq.containsKey(expectedSeq)) {
-                Log.i(TAG, "MQTT_UDP RX reorder OK: seq=$expectedSeq tới trễ (không mất frame)")
-            } else {
-                reorderWaitExpired.add(expectedSeq)
-            }
-            drainUdpInOrder()
-        }
-        return true
-    }
-
-    private fun commitUdpSequence(seq: Long, frames: List<ByteArray>) {
-        remoteSequence = seq
-        enqueuePlayout(seq, frames)
-    }
-
-    private fun enqueuePlayout(seq: Long, frames: List<ByteArray>) {
-        playoutBySeq[seq] = frames
-        if (seq > playoutHighSeq) playoutHighSeq = seq
-        flushPlayoutBuffer()
-    }
-
-    /** Chỉ emit Opus khi đã có ít nhất [UDP_JITTER_FRAMES] frame phía trước (mượt + hấp thụ reorder). */
-    private fun flushPlayoutBuffer(force: Boolean = false) {
-        if (playoutBySeq.isEmpty()) return
-        if (!force) {
-            if (playoutHighSeq < UDP_JITTER_FRAMES) return
-            if (playoutBySeq.size < UDP_JITTER_FRAMES) return
-        }
-        val emitUntil = if (force) playoutHighSeq else playoutHighSeq - UDP_JITTER_FRAMES
-        while (playoutBySeq.isNotEmpty() && playoutBySeq.firstKey() <= emitUntil) {
-            val seq = playoutBySeq.firstKey()
-            emitOpusFrames(playoutBySeq.remove(seq)!!)
-        }
-    }
-
-    private fun decryptUdpAudioPacket(data: ByteArray): List<ByteArray> {
-        val headerLen = readUint16Be(data, 2)
         val cipher = Cipher.getInstance("AES/CTR/NoPadding").apply {
             init(Cipher.DECRYPT_MODE, aesKey, IvParameterSpec(data.copyOfRange(0, aesNonce.size)))
         }
@@ -984,7 +874,9 @@ class MqttProtocol(
             )
         }
         logUdpRx(data, decrypted.size)
-        return listOf(decrypted)
+        toEmit.add(decrypted)
+        emitOpusFrames(toEmit)
+        remoteSequence = sequence
     }
 
     private fun decodeHexString(hex: String): ByteArray =

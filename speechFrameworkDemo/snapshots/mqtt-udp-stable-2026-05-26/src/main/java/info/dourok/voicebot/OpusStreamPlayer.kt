@@ -30,8 +30,7 @@ class OpusStreamPlayer(
     companion object {
         private const val TAG = "OpusStreamPlayer"
         private const val TRACK_BUFFER_MULTIPLIER = 4
-        /** 2× frame TTS 60ms — khớp MQTT UDP_JITTER_FRAMES. */
-        private const val PREBUFFER_MS = 120
+        private const val PREBUFFER_MS = 100
         private const val WRITE_CHUNK_MS = 30
         private const val PLAYBACK_VOLUME = 0.85f
     }
@@ -254,45 +253,74 @@ class OpusStreamPlayer(
     fun release() = shutdown()
 
     /**
-     * Chờ phát hết TTS (buffer rỗng + AudioTrack head ổn ngắn).
-     * Trước đây head-stable 900ms + 6×100ms khiến ting muộn ~1.5s sau khi user nghe hết loa.
+     * Chờ phát hết TTS.
+     * Không thoát ngay khi AudioTrack chưa PLAYING — đợi buffer pending rỗng + head ổn định.
      */
     suspend fun waitForPlaybackCompletion() {
-        val deadlineMs = System.currentTimeMillis() + 20_000L
-        val pollMs = 40L
-        val headStableDrainMs = 280L
+        val deadlineMs = System.currentTimeMillis() + 25_000L
         var sawAudio = false
         var headAtDrain = 0
-        var headStableSince = 0L
+        var headStableMs = 0L
         while (System.currentTimeMillis() < deadlineMs) {
             val pending = synchronized(jitterLock) { pendingPcm.size() }
             val playing = audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING
-            if (pending > 0 || playing) sawAudio = true
+            if (pending > 0 || playing) {
+                sawAudio = true
+            }
             if (!sawAudio) {
-                delay(pollMs)
+                delay(50)
                 continue
             }
-            if (pending == 0 && !playing) break
+            if (pending == 0 && !playing) {
+                break
+            }
+            // MODE_STREAM: track vẫn PLAYING sau khi hết PCM — head không đổi ~1s = phát xong.
             if (pending == 0 && playing) {
                 val head = audioTrack.playbackHeadPosition
                 val now = System.currentTimeMillis()
                 if (head == headAtDrain) {
-                    if (headStableSince == 0L) headStableSince = now
-                    if (now - headStableSince >= headStableDrainMs) {
-                        Log.d(TAG, "waitForPlaybackCompletion: drained head stable ${now - headStableSince}ms")
+                    if (headStableMs == 0L) headStableMs = now
+                    if (now - headStableMs >= 900L) {
+                        Log.d(TAG, "waitForPlaybackCompletion: head ổn ${now - headStableMs}ms, coi như xong")
                         break
                     }
                 } else {
                     headAtDrain = head
-                    headStableSince = now
+                    headStableMs = now
                 }
             } else {
-                headStableSince = 0L
+                headStableMs = 0L
             }
-            delay(pollMs)
+            delay(50)
         }
         synchronized(jitterLock) {
-            if (pendingPcm.size() > 0) flushPending()
+            if (pendingPcm.size() > 0) {
+                flushPending()
+            }
+        }
+        var position = 0
+        var stableCount = 0
+        val requiredStableChecks = 6
+        while (System.currentTimeMillis() < deadlineMs && stableCount < requiredStableChecks) {
+            val pending = synchronized(jitterLock) { pendingPcm.size() }
+            if (pending > 0) {
+                stableCount = 0
+                delay(50)
+                continue
+            }
+            if (audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                stableCount++
+                delay(80)
+                continue
+            }
+            val head = audioTrack.playbackHeadPosition
+            if (head == position) {
+                stableCount++
+            } else {
+                stableCount = 0
+                position = head
+            }
+            delay(100)
         }
         Log.i(TAG, "waitForPlaybackCompletion done (sawAudio=$sawAudio)")
     }

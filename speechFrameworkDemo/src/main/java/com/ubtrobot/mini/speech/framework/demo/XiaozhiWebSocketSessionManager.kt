@@ -257,6 +257,7 @@ class XiaozhiWebSocketSessionManager(
                         delay(80)
                     }
                     sendListenStartOnly(reason, ListeningMode.AUTO_STOP, forceRefresh = isHeyMini)
+                    onWebSocketSessionReady?.invoke()
                     if (!isHeyMini && !deferMicRestart) {
                         mainHandler.post { onTtsStoppedRestartMic?.invoke() }
                     }
@@ -270,12 +271,12 @@ class XiaozhiWebSocketSessionManager(
                 }
                 XiaozhiMcpResponder.awaitInitializeResponded()
                 resetSttActivityOnChannelReset()
-                onWebSocketSessionReady?.invoke()
                 if (isHeyMini) {
                     protocol.sendWakeWordDetected("hey mini")
                     delay(80)
                 }
                 sendListenStartOnly(reason, ListeningMode.AUTO_STOP)
+                onWebSocketSessionReady?.invoke()
                 if (!isHeyMini && !deferMicRestart) {
                     mainHandler.post { onTtsStoppedRestartMic?.invoke() }
                 }

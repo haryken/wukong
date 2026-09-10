@@ -18,7 +18,7 @@ public class MainActivity extends AppCompatActivity {
   private static final int RC_CAMERA = 0x7101;
 
   /** Đổi true khi cần hiện lại mã kích hoạt 6 số trên màn hình. */
-  private static final boolean SHOW_ACTIVATION_CODE_ON_UI = true;
+  private static final boolean SHOW_ACTIVATION_CODE_ON_UI = false;
 
   @Override protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);

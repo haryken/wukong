@@ -398,13 +398,13 @@ class XiaozhiMqttSessionManager(
                     return@withLock false
                 }
                 resetSttActivityOnChannelReset()
+                onWebSocketSessionReady?.invoke()
                 if (isHeyMini) {
                     preparePlayerForGreetingTts()
                     protocol.sendWakeWordDetected("hey mini")
                     delay(80)
                     // Server thường chỉ đẩy Opus TTS qua UDP sau listen – uplink PCM vẫn chặn (suppress greeting).
                     sendListenStartOnly("hey mini chào", ListeningMode.AUTO_STOP, forceRefresh = true)
-                    onWebSocketSessionReady?.invoke()
                     scheduleGreetingTimeout()
                     Log.i(
                         TAG,
@@ -412,7 +412,6 @@ class XiaozhiMqttSessionManager(
                     )
                 } else {
                     sendListenStartOnly(reason, ListeningMode.AUTO_STOP, forceRefresh = false)
-                    onWebSocketSessionReady?.invoke()
                     if (!deferMicRestart) {
                         mainHandler.post { onTtsStoppedRestartMic?.invoke() }
                     }
