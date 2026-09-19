@@ -35,8 +35,8 @@
         .mac-hint { color: #666; font-size: 0.85em; margin-top: 8px; line-height: 1.4; }
         .device-id { font-family: monospace; background: #eef6ff; padding: 8px 10px; border-radius: 6px; margin-top: 8px; word-break: break-all; }
         .active-lesson { font-family: inherit; background: #e8f8ef; border: 1px solid #28a745; color: #1e7e34; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; line-height: 1.4; font-weight: bold; }
-        .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
-        .tab-btn { flex: 1; padding: 12px 8px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; font-weight: bold; color: #555; cursor: pointer; }
+        .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+        .tab-btn { flex: 1 1 40%; min-width: 110px; padding: 10px 6px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; font-weight: bold; color: #555; cursor: pointer; font-size: 0.9em; }
         .tab-btn.active { background: #3498db; color: #fff; border-color: #3498db; }
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
@@ -50,6 +50,20 @@
         .settings-hint { color: #666; font-size: 0.85em; margin: 8px 0 12px; line-height: 1.4; }
         .btn-settings-save { background: #3498db; color: #fff; margin-top: 8px; }
         .btn-settings-save:hover { background: #2980b9; }
+        .try-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+        .try-toolbar input[type="search"] { flex: 1; min-width: 140px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
+        .btn-stop { background: #c0392b; color: #fff; width: auto; padding: 10px 14px; margin-top: 0; }
+        .btn-stop:hover { background: #a93226; }
+        .try-section-title { font-size: 0.95em; font-weight: bold; color: #2c3e50; margin: 14px 0 8px; }
+        .try-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .try-btn { padding: 10px 8px; font-size: 0.82em; line-height: 1.25; background: #ecf0f1; border: 1px solid #bdc3c7; border-radius: 8px; text-align: left; word-break: break-word; cursor: pointer; color: #2c3e50; font-weight: 600; }
+        .try-btn:active, .try-btn.busy { background: #3498db; color: #fff; border-color: #2980b9; }
+        .try-btn.dance { background: #fdebd0; border-color: #f5b041; }
+        .try-btn.dance:active, .try-btn.dance.busy { background: #e67e22; color: #fff; border-color: #d35400; }
+        .try-btn.express { background: #e8f6f3; border-color: #76d7c4; }
+        .try-btn.express:active, .try-btn.express.busy { background: #16a085; color: #fff; }
+        .try-meta { font-size: 0.85em; color: #888; margin-bottom: 8px; }
+        .try-empty { color: #999; font-style: italic; padding: 12px 0; }
     </style>
 </head>
 <body>
@@ -58,7 +72,9 @@
 
     <div class="tabs">
         <button type="button" class="tab-btn active" id="tab_btn_student" onclick="switchTab('student')">📚 Học viên</button>
-        <button type="button" class="tab-btn" id="tab_btn_robot" onclick="switchTab('robot')">⚙️ Cài đặt robot</button>
+        <button type="button" class="tab-btn" id="tab_btn_robot" onclick="switchTab('robot')">⚙️ Cài đặt</button>
+        <button type="button" class="tab-btn" id="tab_btn_actions" onclick="switchTab('actions')">🕺 Hành động</button>
+        <button type="button" class="tab-btn" id="tab_btn_express" onclick="switchTab('express')">👀 Biểu cảm</button>
     </div>
 
     <div class="tab-panel active" id="tab_student">
@@ -148,15 +164,53 @@
         </div>
     </div><!-- /tab_robot -->
 
+    <div class="tab-panel" id="tab_actions">
+        <div class="card">
+            <h2>🕺 Hành động &amp; bài múa</h2>
+            <p class="settings-hint">Bấm nút → robot chạy skill ROM ngay. Múa (cam) tách riêng; skill khác (xám).</p>
+            <div class="try-toolbar">
+                <input type="search" id="actions_search" placeholder="Tìm tên skill / múa..." oninput="filterTryLists()">
+                <button type="button" class="btn btn-stop" onclick="stopTryout()">⏹ Dừng</button>
+            </div>
+            <div class="try-meta" id="actions_meta">Đang tải danh sách…</div>
+            <div class="try-section-title">Bài múa</div>
+            <div class="try-grid" id="dance_grid"></div>
+            <div class="try-section-title">Hành động / skill khác</div>
+            <div class="try-grid" id="skill_grid"></div>
+        </div>
+    </div>
+
+    <div class="tab-panel" id="tab_express">
+        <div class="card">
+            <h2>👀 Biểu cảm mắt (DDeere / ROM)</h2>
+            <p class="settings-hint">Bấm để xem express trên mắt. Chọn cái hay rồi nhớ tên để dùng sau (vd. nhạc: streaming_media_001).</p>
+            <div class="try-toolbar">
+                <input type="search" id="express_search" placeholder="Tìm biểu cảm..." oninput="filterTryLists()">
+                <button type="button" class="btn btn-stop" onclick="stopTryout()">⏹ Dừng</button>
+            </div>
+            <div class="try-meta" id="express_meta">Đang tải danh sách…</div>
+            <div class="try-grid" id="express_grid"></div>
+        </div>
+    </div>
+
     <script>
         const MOCK_UNITS = ['Unit 1', 'Unit 2', 'Unit 3', 'Unit 4', 'Unit 5', 'Unit 6'];
         const DEFAULT_MUSIC_SERVER = 'https://youtube.kytuoi.com';
 
+        let actionsCache = { dances: [], skills: [] };
+        let expressCache = [];
+        let tryoutLoaded = false;
+
         function switchTab(name) {
-            document.getElementById('tab_student').classList.toggle('active', name === 'student');
-            document.getElementById('tab_robot').classList.toggle('active', name === 'robot');
-            document.getElementById('tab_btn_student').classList.toggle('active', name === 'student');
-            document.getElementById('tab_btn_robot').classList.toggle('active', name === 'robot');
+            ['student', 'robot', 'actions', 'express'].forEach(n => {
+                const panel = document.getElementById('tab_' + n);
+                const btn = document.getElementById('tab_btn_' + n);
+                if (panel) panel.classList.toggle('active', n === name);
+                if (btn) btn.classList.toggle('active', n === name);
+            });
+            if ((name === 'actions' || name === 'express') && !tryoutLoaded) {
+                loadTryoutCatalogs();
+            }
         }
 
         function toggleSettingsBlock(id) {
@@ -165,6 +219,95 @@
             const wasOpen = el.classList.contains('open');
             document.querySelectorAll('.settings-block').forEach(b => b.classList.remove('open'));
             if (!wasOpen) el.classList.add('open');
+        }
+
+        async function loadTryoutCatalogs() {
+            try {
+                const [aResp, eResp] = await Promise.all([
+                    fetch('/api/actions'),
+                    fetch('/api/expresses')
+                ]);
+                const aData = await aResp.json();
+                const eData = await eResp.json();
+                actionsCache.dances = aData.dances || [];
+                actionsCache.skills = aData.skills || [];
+                expressCache = eData.expresses || [];
+                tryoutLoaded = true;
+                document.getElementById('actions_meta').textContent =
+                    'Múa: ' + actionsCache.dances.length + ' · Skill: ' + actionsCache.skills.length;
+                document.getElementById('express_meta').textContent =
+                    'Biểu cảm: ' + expressCache.length;
+                filterTryLists();
+            } catch (err) {
+                document.getElementById('actions_meta').textContent = 'Lỗi tải: ' + err.message;
+                document.getElementById('express_meta').textContent = 'Lỗi tải: ' + err.message;
+            }
+        }
+
+        function filterTryLists() {
+            const aq = (document.getElementById('actions_search').value || '').trim().toLowerCase();
+            const eq = (document.getElementById('express_search').value || '').trim().toLowerCase();
+            renderTryGrid('dance_grid', actionsCache.dances.filter(x => !aq || (x.id || '').toLowerCase().includes(aq)), 'dance', 'playSkill');
+            renderTryGrid('skill_grid', actionsCache.skills.filter(x => !aq || (x.id || '').toLowerCase().includes(aq)), '', 'playSkill');
+            renderTryGrid('express_grid', expressCache.filter(x => !eq || (x.id || '').toLowerCase().includes(eq)), 'express', 'playExpress');
+        }
+
+        function renderTryGrid(gridId, items, extraClass, playFn) {
+            const grid = document.getElementById(gridId);
+            if (!grid) return;
+            if (!items.length) {
+                grid.innerHTML = '<div class="try-empty">Không có mục nào</div>';
+                return;
+            }
+            grid.innerHTML = items.map(it => {
+                const id = (it.id || '').replace(/"/g, '&quot;');
+                const label = (it.label || it.id || '').replace(/</g, '&lt;');
+                const cls = 'try-btn' + (extraClass ? ' ' + extraClass : '');
+                return '<button type="button" class="' + cls + '" onclick="' + playFn + '(this,\'' + id.replace(/'/g, "\\'") + '\')">' + label + '</button>';
+            }).join('');
+        }
+
+        async function playSkill(btn, name) {
+            btn.classList.add('busy');
+            try {
+                const resp = await fetch('/api/play_skill', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+                const data = await resp.json();
+                if (!data.success) showToast('❌ ' + (data.error || name));
+                else showToast('▶️ ' + name);
+            } catch (err) {
+                showToast('Lỗi: ' + err.message);
+            }
+            btn.classList.remove('busy');
+        }
+
+        async function playExpress(btn, name) {
+            btn.classList.add('busy');
+            try {
+                const resp = await fetch('/api/play_express', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+                const data = await resp.json();
+                if (!data.success) showToast('❌ ' + (data.error || name));
+                else showToast('👀 ' + name);
+            } catch (err) {
+                showToast('Lỗi: ' + err.message);
+            }
+            btn.classList.remove('busy');
+        }
+
+        async function stopTryout() {
+            try {
+                await fetch('/api/stop_tryout', { method: 'POST' });
+                showToast('⏹ Đã dừng');
+            } catch (err) {
+                showToast('Lỗi dừng: ' + err.message);
+            }
         }
 
         async function saveMusicServer() {

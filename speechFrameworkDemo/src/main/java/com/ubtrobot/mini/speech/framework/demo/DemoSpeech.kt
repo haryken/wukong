@@ -346,6 +346,11 @@ object DemoSpeech : SpeechModuleFactory() {
                         if (!localReadySignaled) {
                             localReadySignaled = true
                         }
+                        try {
+                            IdleAmbientSkillScheduler.start { xiaozhiSessionRef }
+                        } catch (e: Exception) {
+                            LogUtils.w(TAG, "IdleAmbientSkillScheduler: ${e.message}")
+                        }
                     } else {
                         LogUtils.e(TAG, "[WakeWord] sherpa not ready – mic NOT started (check sherpa-kws ONNX bundle)")
                     }

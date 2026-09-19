@@ -234,6 +234,53 @@ object SelfControlHttpServer {
                     }
                     writeResponse(sock.getOutputStream(), 200, "application/json; charset=utf-8", resp.toString())
                 }
+                method == "GET" && path == "/api/actions" -> {
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        SelfControlRobotTryout.listActions().toString()
+                    )
+                }
+                method == "GET" && path == "/api/expresses" -> {
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        SelfControlRobotTryout.listExpresses().toString()
+                    )
+                }
+                method == "POST" && path == "/api/play_skill" -> {
+                    val name = try {
+                        JSONObject(body.ifBlank { "{}" }).optString("name", "")
+                    } catch (_: Exception) {
+                        ""
+                    }
+                    val resp = SelfControlRobotTryout.playSkill(name)
+                    writeResponse(
+                        sock.getOutputStream(),
+                        if (resp.optBoolean("success")) 200 else 400,
+                        "application/json; charset=utf-8",
+                        resp.toString()
+                    )
+                }
+                method == "POST" && path == "/api/play_express" -> {
+                    val name = try {
+                        JSONObject(body.ifBlank { "{}" }).optString("name", "")
+                    } catch (_: Exception) {
+                        ""
+                    }
+                    val resp = SelfControlRobotTryout.playExpress(name)
+                    writeResponse(
+                        sock.getOutputStream(),
+                        if (resp.optBoolean("success")) 200 else 400,
+                        "application/json; charset=utf-8",
+                        resp.toString()
+                    )
+                }
+                method == "POST" && path == "/api/stop_tryout" -> {
+                    val resp = SelfControlRobotTryout.stopAll()
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        resp.toString()
+                    )
+                }
                 else -> writeResponse(sock.getOutputStream(), 404, "text/plain", "Not Found")
             }
         } catch (e: Exception) {

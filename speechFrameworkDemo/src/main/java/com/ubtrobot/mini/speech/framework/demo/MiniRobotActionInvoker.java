@@ -1007,17 +1007,24 @@ public final class MiniRobotActionInvoker {
                     + suppressLlmEmotionReason + ")");
             return;
         }
+        final String emotionIn = emotion;
+        final String eyeName = LlmEmotionEyeMapper.resolveExpressName(emotionIn);
+        try {
+            ActivationEyeDisplay.playLlmEmotionEyes(eyeName);
+        } catch (Throwable t) {
+            Log.w(TAG, "LLM emotion eyes: " + t.getMessage());
+        }
         String skillName = LlmEmotionSkillMapper.resolveSkillName(emotion);
         long now = System.currentTimeMillis();
         if (skillName.equals(lastLlmEmotionApplied) && now - lastLlmEmotionSkillMs < 2500L) {
-            Log.d(TAG, "LLM emotion: bỏ qua trùng \"" + emotion + "\" → " + skillName + " (cooldown 2.5s)");
+            Log.d(TAG, "LLM emotion skill: bỏ qua trùng \"" + emotion + "\" → " + skillName
+                    + " (cooldown 2.5s); mắt=" + eyeName);
             return;
         }
         lastLlmEmotionApplied = skillName;
         lastLlmEmotionSkillMs = now;
-        final String emotionIn = emotion;
         MAIN.post(() -> {
-            Log.i(TAG, "LLM emotion \"" + emotionIn + "\" → SkillApi." + skillName);
+            Log.i(TAG, "LLM emotion \"" + emotionIn + "\" → mắt=" + eyeName + " skill=" + skillName);
             if (trySkillApiStartByIntentName(skillName)) {
                 return;
             }
@@ -1818,6 +1825,57 @@ public final class MiniRobotActionInvoker {
         } catch (ClassNotFoundException e) {
             return null;
         }
+    }
+
+    /**
+     * Self-Control :8080 — chạy 1 skill theo tên enum/intent ROM (nút thử hành động / múa).
+     */
+    public static boolean startSkillByNameForTryout(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return false;
+        }
+        String n = name.trim();
+        if (AlphaMiniRomDanceSkills.isRomDanceSkillName(n)) {
+            extendLlmEmotionSuppress(SUPPRESS_LLM_EMOTION_FOR_DANCE_MS, "tryout dance " + n);
+            XiaozhiSessionManager.noteRobotSkillPcmSuppress(SUPPRESS_PCM_FOR_DANCE_MS, "tryout:" + n);
+        } else if ("TAIJI".equalsIgnoreCase(n)) {
+            extendLlmEmotionSuppress(SUPPRESS_LLM_EMOTION_FOR_TAIJI_MS, "tryout TAIJI");
+            XiaozhiSessionManager.noteRobotSkillPcmSuppress(SUPPRESS_LLM_EMOTION_FOR_TAIJI_MS, "tryout:TAIJI");
+        } else {
+            suppressLlmEmotionForRobotAction(SUPPRESS_LLM_EMOTION_FOR_ACTION_MS);
+        }
+        if (trySkillApiStartByIntentName(n)) {
+            Log.i(TAG, "Tryout SkillApi.startSkill(\"" + n + "\") OK");
+            return true;
+        }
+        invokeStartSkillByIntent(n);
+        Log.i(TAG, "Tryout fallback invokeStartSkillByIntent(\"" + n + "\")");
+        return true;
+    }
+
+    /**
+     * Chỉ {@code SkillApi.startSkill} — true nếu enum khớp ROM.
+     * Dùng idle ambient (thử lần lượt DOZE/doze, FART/break_wind…).
+     */
+    public static boolean tryStartSkillApiOnly(String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return false;
+        }
+        String n = name.trim();
+        suppressLlmEmotionForRobotAction(SUPPRESS_LLM_EMOTION_FOR_ACTION_MS);
+        boolean ok = trySkillApiStartByIntentName(n);
+        if (ok) {
+            Log.i(TAG, "SkillApi-only startSkill(\"" + n + "\") OK");
+        }
+        return ok;
+    }
+
+    /** Self-Control :8080 — dừng skill di chuyển / action đang chạy. */
+    public static void stopTryoutMotion() {
+        trySkillApiStopViaReflectionNoArg();
+        invokeStopBuiltinLocomotionSkills();
+        invokeStopAction();
+        Log.i(TAG, "Tryout stop skill/action");
     }
 
     /**

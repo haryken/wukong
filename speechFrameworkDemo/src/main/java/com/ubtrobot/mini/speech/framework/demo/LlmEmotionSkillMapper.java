@@ -1,13 +1,18 @@
 package com.ubtrobot.mini.speech.framework.demo;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
+import java.util.Set;
 
 /**
  * Map {@code emotion} server ({@code type:"llm"}) → skill ROM (không dùng {@code SAY_HI} — có âm hệ thống chen TTS):
- * {@code SCRATCH}, {@code HAND_KISS}, {@code HUG}, {@code BE_CUTE}, {@code FRIGHTEN}.
- * Chào / greeting → {@code HAND_KISS}. Không khớp → {@link #DEFAULT_SKILL} ({@code BE_CUTE}).
+ * {@code SCRATCH}, {@code HAND_KISS}, {@code HUG}, {@code BE_CUTE}, {@code FRIGHTEN}, {@code NOD}, {@code SHAKE_HAND}.
+ * Nhóm chào/vui (happy, greeting, …) → random
+ * {@code BE_CUTE}/{@code HAND_KISS}/{@code SCRATCH}/{@code HUG}/{@code NOD}/{@code SHAKE_HAND}.
+ * Không khớp → {@link #DEFAULT_SKILL} ({@code BE_CUTE}).
  */
 public final class LlmEmotionSkillMapper {
 
@@ -16,30 +21,52 @@ public final class LlmEmotionSkillMapper {
     public static final String SKILL_HUG = "HUG";
     public static final String SKILL_BE_CUTE = "BE_CUTE";
     public static final String SKILL_FRIGHTEN = "FRIGHTEN";
+    public static final String SKILL_NOD = "NOD";
+    /** Bắt tay — enum ROM thường {@code SHAKE_HAND} (doc: shake_hand). */
+    public static final String SKILL_HANDSHAKE = "SHAKE_HAND";
 
     /** Mặc định — lắc người. */
     public static final String DEFAULT_SKILL = SKILL_BE_CUTE;
 
+    /**
+     * Pool random cho emotion chào / vui / hôn gió — tránh luôn cùng 1 skill.
+     */
+    private static final String[] FRIENDLY_RANDOM_POOL = {
+            SKILL_BE_CUTE,
+            SKILL_HAND_KISS,
+            SKILL_SCRATCH,
+            SKILL_HUG,
+            SKILL_NOD,
+            SKILL_HANDSHAKE
+    };
+
+    private static final String MARK_FRIENDLY_RANDOM = "__FRIENDLY_RANDOM__";
+    private static final Random RANDOM = new Random();
+
     private static final Map<String, String> EMOTION_TO_SKILL = new HashMap<>();
+    private static final Set<String> FRIENDLY_RANDOM_KEYS = new HashSet<>();
 
     static {
-        /* Tên skill trực tiếp — say_hi map sang HAND_KISS, không gọi SAY_HI */
-        reg("say_hi", SKILL_HAND_KISS);
+        /* Tên skill trực tiếp (gọi đúng skill đó) */
         reg("scratch", SKILL_SCRATCH);
-        reg("hand_kiss", SKILL_HAND_KISS);
         reg("hug", SKILL_HUG);
         reg("be_cute", SKILL_BE_CUTE);
         reg("frighten", SKILL_FRIGHTEN);
 
-        /* Otto / Xiaozhi: chào / vui → HAND_KISS hoặc BE_CUTE (không SAY_HI) */
-        reg("greeting", SKILL_HAND_KISS);
-        reg("wave", SKILL_HAND_KISS);
-        reg("happy", SKILL_HAND_KISS);
+        /* Chào / vui / hôn gió → random 6 skill thân thiện */
+        regFriendlyRandom("happy");
+        regFriendlyRandom("greeting");
+        regFriendlyRandom("wave");
+        regFriendlyRandom("say_hi");
+        regFriendlyRandom("hand_kiss");
+        regFriendlyRandom("kissy");
+        regFriendlyRandom("winking");
+        regFriendlyRandom("chao");
+        regFriendlyRandom("chào");
+        regFriendlyRandom("hon");
+        regFriendlyRandom("hôn");
 
         reg("embarrassed", SKILL_SCRATCH);
-
-        reg("kissy", SKILL_HAND_KISS);
-        reg("winking", SKILL_HAND_KISS);
 
         reg("loving", SKILL_HUG);
 
@@ -63,12 +90,8 @@ public final class LlmEmotionSkillMapper {
         reg("thinking", SKILL_BE_CUTE);
         reg("confused", SKILL_BE_CUTE);
 
-        reg("chao", SKILL_HAND_KISS);
-        reg("chào", SKILL_HAND_KISS);
         reg("gai", SKILL_SCRATCH);
         reg("gãi", SKILL_SCRATCH);
-        reg("hon", SKILL_HAND_KISS);
-        reg("hôn", SKILL_HAND_KISS);
         reg("om", SKILL_HUG);
         reg("ôm", SKILL_HUG);
         reg("de_thuong", SKILL_BE_CUTE);
@@ -84,6 +107,17 @@ public final class LlmEmotionSkillMapper {
         EMOTION_TO_SKILL.put(normalize(emotionKey), skillApiName);
     }
 
+    private static void regFriendlyRandom(String emotionKey) {
+        if (emotionKey == null) return;
+        String key = normalize(emotionKey);
+        FRIENDLY_RANDOM_KEYS.add(key);
+        EMOTION_TO_SKILL.put(key, MARK_FRIENDLY_RANDOM);
+    }
+
+    private static String pickFriendlyRandom() {
+        return FRIENDLY_RANDOM_POOL[RANDOM.nextInt(FRIENDLY_RANDOM_POOL.length)];
+    }
+
     private static String normalize(String s) {
         return s.trim().toLowerCase(Locale.US).replace('-', '_').replace(' ', '_');
     }
@@ -96,12 +130,21 @@ public final class LlmEmotionSkillMapper {
             return DEFAULT_SKILL;
         }
         String key = normalize(emotion);
+        if (FRIENDLY_RANDOM_KEYS.contains(key) || MARK_FRIENDLY_RANDOM.equals(EMOTION_TO_SKILL.get(key))) {
+            return pickFriendlyRandom();
+        }
         String skill = EMOTION_TO_SKILL.get(key);
         if (skill != null) {
+            if (MARK_FRIENDLY_RANDOM.equals(skill)) {
+                return pickFriendlyRandom();
+            }
             return skill;
         }
         for (Map.Entry<String, String> e : EMOTION_TO_SKILL.entrySet()) {
             if (key.contains(e.getKey()) || e.getKey().contains(key)) {
+                if (MARK_FRIENDLY_RANDOM.equals(e.getValue()) || FRIENDLY_RANDOM_KEYS.contains(e.getKey())) {
+                    return pickFriendlyRandom();
+                }
                 return e.getValue();
             }
         }

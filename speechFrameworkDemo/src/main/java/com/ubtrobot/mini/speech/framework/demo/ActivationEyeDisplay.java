@@ -1255,6 +1255,38 @@ public class ActivationEyeDisplay {
     return musicExpressActive.get();
   }
 
+  /**
+   * Biểu cảm mắt theo emotion LLM (1 lần, không loop).
+   * Bỏ qua nếu QR / đang phát nhạc.
+   */
+  public static void playLlmEmotionEyes(String expressName) {
+    if (expressName == null || expressName.trim().isEmpty()) return;
+    if (qrShowing.get() || musicExpressActive.get()) {
+      Log.i(TAG, "playLlmEmotionEyes bỏ qua \"" + expressName + "\" – QR/nhạc");
+      return;
+    }
+    final String name = expressName.trim();
+    new Thread(() -> {
+      try {
+        if (qrShowing.get() || musicExpressActive.get()) return;
+        ExpressApi api = ExpressApi.get();
+        api.doExpress(name, 1, Priority.HIGH, new AnimationListener() {
+          @Override public void onAnimationStart() {
+          }
+
+          @Override public void onAnimationEnd(int i) {
+          }
+
+          @Override public void onAnimationRepeat(int loopNumber) {
+          }
+        });
+        Log.i(TAG, "LLM emotion eyes → " + name);
+      } catch (Exception e) {
+        Log.w(TAG, "playLlmEmotionEyes " + name + ": " + e.getMessage());
+      }
+    }, "LlmEmotionEyes").start();
+  }
+
   private static void restoreNormalEyes() {
     if (qrShowing.get()) {
       Log.i(TAG, "restoreNormalEyes skipped – QR đang hiện");
