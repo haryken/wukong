@@ -24,7 +24,7 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 class WebsocketProtocol(
-    private val deviceInfo: DeviceInfo,
+    private var deviceInfo: DeviceInfo,
     private val url: String,
     private val accessToken: String
 ) : Protocol() {
@@ -51,6 +51,12 @@ class WebsocketProtocol(
 
     init {
         sessionId = "your_session_id"
+    }
+
+    /** Self-Control: đổi Device-Id / Client-Id trước khi mở WS mới (không đụng luồng nói). */
+    fun updateIdentity(deviceId: String, clientId: String) {
+        deviceInfo = info.dourok.voicebot.data.model.DummyDataGenerator.generate(deviceId, clientId)
+        Log.i(TAG, "updateIdentity Device-Id=$deviceId Client-Id=$clientId")
     }
 
     override suspend fun start() {
@@ -199,6 +205,8 @@ class WebsocketProtocol(
                 Log.e(TAG, "WebSocket error: ${t.message}")
                 scope.launch {
                     networkErrorFlow.emit("Server not found")
+                    // Giống onClosed: báo CLOSED để session biết kênh chết (không để kẹt isOpen=false im lặng).
+                    audioChannelStateFlow.emit(AudioState.CLOSED)
                 }
                 if (websocket === webSocket) websocket = null
             }

@@ -4,13 +4,14 @@ import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.util.Log;
 
 import com.ubtrobot.mini.speech.framework.MicrophoneArrayService;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Khởi động speech stack <b>một lần</b> mỗi process — tránh startService lặp (log bootstrap tắt mặc định).
+ * Giống develop2222 / 2b23f8d: DemoMaster + MicrophoneArrayService (AAR, process :speech) + keep-alive.
  */
 public final class SpeechBootstrap {
     private static final String TAG = "SpeechBootstrap";
@@ -22,33 +23,42 @@ public final class SpeechBootstrap {
     public static void startOnce(Context context) {
         if (context == null) return;
         if (!started.compareAndSet(false, true)) {
-            SpeechLog.bootD(TAG, "đã khởi động — bỏ qua");
             return;
         }
         Context app = context.getApplicationContext();
-        SpeechLog.bootI(TAG, "khởi động speech stack (verbose boot)");
+        Log.i(TAG, "khởi động speech stack (DemoMaster + MicArray AAR)");
+
+        // Encode sẵn cặp mắt Self-Control (IP+QR) trước khi Xiaozhi sẵn sàng.
+        try {
+            ActivationEyeDisplay.startBootSelfControlEyeWarm(app);
+        } catch (Throwable t) {
+            Log.w(TAG, "boot eye warm: " + t.getMessage());
+        }
 
         startIfNotRunning(app, DemoMasterService.class);
         startIfNotRunning(app, MicrophoneArrayService.class);
         startKeepAliveOnce(app);
+        try {
+            com.ubtrobot.mini.speech.framework.demo.wificonfig.WifiProvisionController.start(app);
+        } catch (Throwable t) {
+            Log.w(TAG, "WifiProvisionController: " + t.getMessage());
+        }
     }
 
     private static void startIfNotRunning(Context app, Class<?> serviceClass) {
         if (isServiceRunning(app, serviceClass)) {
-            SpeechLog.bootD(TAG, serviceClass.getSimpleName() + " đã chạy");
             return;
         }
         try {
             app.startService(new Intent(app, serviceClass));
-            SpeechLog.bootD(TAG, "startService " + serviceClass.getSimpleName());
+            Log.i(TAG, "startService " + serviceClass.getSimpleName());
         } catch (Throwable t) {
-            SpeechLog.bootE(TAG, "startService " + serviceClass.getSimpleName(), t);
+            Log.e(TAG, "startService " + serviceClass.getSimpleName(), t);
         }
     }
 
     private static void startKeepAliveOnce(Context app) {
         if (SpeechServiceLauncher.isKeepAliveMarkedOrRunning(app)) {
-            SpeechLog.bootD(TAG, "keep-alive đã có");
             return;
         }
         try {
@@ -58,9 +68,8 @@ public final class SpeechBootstrap {
             } else {
                 app.startService(keep);
             }
-            SpeechLog.bootD(TAG, "start keep-alive");
         } catch (Throwable t) {
-            SpeechLog.bootE(TAG, "start keep-alive", t);
+            Log.e(TAG, "start keep-alive", t);
         }
     }
 

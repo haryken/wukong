@@ -1,7 +1,6 @@
 package com.ubtrobot.mini.speech.framework.demo;
 
 import android.content.Context;
-import android.content.Intent;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -19,13 +18,14 @@ import com.ubtrobot.speech.SpeechSettings;
 import com.ubtrobot.ulog.FwLoggerFactory2;
 import com.ubtrobot.ulog.logger.android.AndroidLoggerFactory;
 
+/**
+ * Giống develop2222 / commit 2b23f8d: đăng ký {@link DemoSpeech} lên Master để đè speech stock.
+ * Cần kèm MicrophoneArrayService thật (AAR) + {@code ubt-master-app=third_part_speechservice}
+ * + tắt nguồn robot sau khi cài.
+ */
 public class SpeechApplication extends AbstractSpeechApplication {
   private static final String TAG_APP = "SpeechApplication";
 
-  /**
-   * Giống {@code DemoApp} trong mini-outer-sdk-demo: {@code PropertiesApi.setRootPath} +
-   * {@code SDKInit.initialize}. Dùng reflection để project vẫn compile khi chưa copy JAR outer SDK.
-   */
   private static void tryInitUbtMiniSdkLikeOuterDemo(Context app) {
     try {
       Class<?> pathCl = Class.forName("com.ubtrobot.mini.properties.sdk.Path");
@@ -45,7 +45,6 @@ public class SpeechApplication extends AbstractSpeechApplication {
     }
   }
 
-  /** Log một lần khi khởi động: có TakePicApi trong APK hay chưa (MCP vision / self.camera.take_photo). */
   private static void logSauronTakePicAvailability() {
     try {
       Class.forName("com.ubtechinc.sauron.api.TakePicApi");
@@ -76,7 +75,8 @@ public class SpeechApplication extends AbstractSpeechApplication {
         BuildConfig.DEBUG ? new AndroidLoggerFactory() : new InfrequentLoggerFactory());
 
     SpeechBootstrap.startOnce(this);
-    
+
+    // Giống develop2222 / 2b23f8d — Master nhận DemoSpeech thật.
     ServiceModules.declare(SpeechSettings.class,
         (aClass, moduleCreatedNotifier) -> moduleCreatedNotifier.notifyModuleCreated(
             DemoSpeech.INSTANCE.createSpeechSettings()));

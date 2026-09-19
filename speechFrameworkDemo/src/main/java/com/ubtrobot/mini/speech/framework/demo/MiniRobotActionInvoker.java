@@ -991,6 +991,10 @@ public final class MiniRobotActionInvoker {
         if (emotion == null || emotion.isEmpty()) {
             return;
         }
+        if (ActivationEyeDisplay.isQrShowing()) {
+            Log.i(TAG, "LLM emotion \"" + emotion + "\" bỏ qua — đang hiện QR cấu hình trên mắt");
+            return;
+        }
         if (System.currentTimeMillis() < suppressLlmEmotionUntilMs) {
             long leftSec = (suppressLlmEmotionUntilMs - System.currentTimeMillis() + 999) / 1000;
             Log.i(TAG, "LLM emotion \"" + emotion + "\" bỏ qua — còn ~" + leftSec + "s ("
@@ -1155,7 +1159,8 @@ public final class MiniRobotActionInvoker {
     }
 
     private static void invokeStandUpSdk(String methodName) {
-        suppressLlmEmotionForRobotAction(SUPPRESS_LLM_EMOTION_FOR_ACTION_MS);
+        // Stand/sit/squat không chen emotion tay — KHÔNG suppress LLM emotion
+        // (boot StandUp retry từng làm mất HAND_KISS ~12s mỗi lần).
         try {
             Class<?> c = Class.forName("ubtechinc.com.standupsdk.StandUpApi");
             Method get = c.getMethod("get");

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Cấu hình Wi‑Fi Robot</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; max-width: 440px; margin: auto; background: #f6f7f9; color: #111; }
+    .card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    h1 { font-size: 1.25rem; margin: 0 0 8px; }
+    p { line-height: 1.45; }
+    label { display: block; margin: 14px 0 6px; font-weight: 600; font-size: .9rem; }
+    input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; }
+    button.primary { margin-top: 18px; width: 100%; padding: 14px; border: 0; border-radius: 8px; background: #0b6bcb; color: #fff; font-size: 1rem; font-weight: 600; }
+    button.primary:disabled { opacity: .6; }
+    button.refresh { margin: 8px 0 0; padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; background: #fff; font-size: .9rem; }
+    .hint { font-size: .85rem; color: #555; }
+    code { background: #eef2f7; padding: 2px 6px; border-radius: 4px; }
+    #wifi-list { list-style: none; padding: 0; margin: 8px 0 0; max-height: 240px; overflow-y: auto; border: 1px solid #e2e5ea; border-radius: 8px; }
+    #wifi-list li { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid #eef0f3; cursor: pointer; }
+    #wifi-list li:last-child { border-bottom: 0; }
+    #wifi-list li:active, #wifi-list li.selected { background: #e8f2fc; }
+    #wifi-list .ssid { font-weight: 600; word-break: break-all; }
+    #wifi-list .meta { font-size: .8rem; color: #666; white-space: nowrap; margin-left: 10px; }
+    #scan-status { font-size: .8rem; color: #666; min-height: 1.2em; }
+
+    #toast-host {
+      position: fixed; left: 12px; right: 12px; top: 12px; z-index: 9999;
+      display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 12px 14px; border-radius: 12px; color: #fff;
+      box-shadow: 0 6px 20px rgba(0,0,0,.18);
+      font-size: .92rem; line-height: 1.4;
+      transform: translateY(0); opacity: 1;
+      transition: transform .2s ease, opacity .2s ease;
+      touch-action: none; user-select: none;
+    }
+    .toast.ok { background: #1f9d55; }
+    .toast.err { background: #d64545; }
+    .toast.warn { background: #c47f12; }
+    .toast .msg { flex: 1; word-break: break-word; }
+    .toast .close {
+      flex: 0 0 auto; width: 28px; height: 28px; border: 0; border-radius: 50%;
+      background: rgba(255,255,255,.22); color: #fff; font-size: 18px; line-height: 28px;
+      cursor: pointer; padding: 0;
+    }
+    .toast.hide { opacity: 0; transform: translateY(-12px); }
+  </style>
+</head>
+<body>
+  <div id="toast-host"></div>
+  <script>window.__LAST_FAIL_SSID__ = "{{LAST_FAIL_SSID}}";</script>
+  <div class="card">
+    <h1>Cấu hình Wi‑Fi cho robot</h1>
+    <p class="hint">Bạn đang nối hotspot robot <code>{{AP_SSID}}</code>
+      {{AP_PASS_HINT}}</p>
+    <p class="hint">Portal: <code>{{PORTAL}}</code></p>
+
+    <label>Chọn Wi‑Fi quanh đây</label>
+    <button type="button" class="refresh" id="btn-refresh">Quét lại</button>
+    <div id="scan-status">Đang tải danh sách…</div>
+    <ul id="wifi-list"></ul>
+    <p class="hint">Danh sách lấy lúc robot quét trước khi bật hotspot. Bấm Quét lại khi SoftAP đang bật thường không thêm mạng mới.</p>
+
+    <form id="wifi-form">
+      <label for="ssid">Tên Wi‑Fi (SSID)</label>
+      <input id="ssid" name="ssid" autocomplete="ssid" required placeholder="Chọn ở trên hoặc nhập tay"/>
+      <label for="password">Mật khẩu Wi‑Fi</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Để trống nếu Wi‑Fi mở"/>
+      <button class="primary" type="submit" id="btn-submit">Lưu &amp; kết nối</button>
+    </form>
+  </div>
+  <script>
+    (function () {
+      var listEl = document.getElementById('wifi-list');
+      var statusEl = document.getElementById('scan-status');
+      var ssidEl = document.getElementById('ssid');
+      var passEl = document.getElementById('password');
+      var btn = document.getElementById('btn-refresh');
+      var form = document.getElementById('wifi-form');
+      var submitBtn = document.getElementById('btn-submit');
+      var toastHost = document.getElementById('toast-host');
+
+      function dismissToast(el) {
+        if (!el || el.classList.contains('hide')) return;
+        el.classList.add('hide');
+        setTimeout(function () {
+          if (el.parentNode) el.parentNode.removeChild(el);
+        }, 220);
+      }
+
+      function showToast(message, type) {
+        var el = document.createElement('div');
+        el.className = 'toast ' + (type || 'ok');
+        var msg = document.createElement('div');
+        msg.className = 'msg';
+        msg.textContent = message;
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'close';
+        close.setAttribute('aria-label', 'Đóng');
+        close.textContent = '×';
+        close.onclick = function (e) {
+          e.stopPropagation();
+          dismissToast(el);
+        };
+        el.appendChild(msg);
+        el.appendChild(close);
+        toastHost.appendChild(el);
+
+        var startX = 0, startY = 0, dx = 0, dy = 0, tracking = false;
+        function onStart(x, y) {
+          tracking = true;
+          startX = x; startY = y; dx = 0; dy = 0;
+          el.style.transition = 'none';
+        }
+        function onMove(x, y) {
+          if (!tracking) return;
+          dx = x - startX; dy = y - startY;
+          el.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+          el.style.opacity = String(Math.max(0.25, 1 - Math.hypot(dx, dy) / 160));
+        }
+        function onEnd() {
+          if (!tracking) return;
+          tracking = false;
+          el.style.transition = '';
+          if (Math.hypot(dx, dy) > 48) {
+            dismissToast(el);
+          } else {
+            el.style.transform = '';
+            el.style.opacity = '';
+          }
+        }
+        el.addEventListener('touchstart', function (e) {
+          if (!e.touches || !e.touches[0]) return;
+          onStart(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: true });
+        el.addEventListener('touchmove', function (e) {
+          if (!e.touches || !e.touches[0]) return;
+          onMove(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: true });
+        el.addEventListener('touchend', onEnd);
+        el.addEventListener('touchcancel', onEnd);
+        el.addEventListener('mousedown', function (e) {
+          onStart(e.clientX, e.clientY);
+          function mm(ev) { onMove(ev.clientX, ev.clientY); }
+          function mu() {
+            document.removeEventListener('mousemove', mm);
+            document.removeEventListener('mouseup', mu);
+            onEnd();
+          }
+          document.addEventListener('mousemove', mm);
+          document.addEventListener('mouseup', mu);
+        });
+        return el;
+      }
+
+      function bars(rssi) {
+        if (rssi >= -55) return '||||';
+        if (rssi >= -65) return '|||';
+        if (rssi >= -75) return '||';
+        return '|';
+      }
+
+      function render(aps) {
+        listEl.innerHTML = '';
+        if (!aps || !aps.length) {
+          statusEl.textContent = 'Không thấy mạng — nhập SSID thủ công hoặc bấm Quét lại.';
+          return;
+        }
+        statusEl.textContent = 'Chạm một mạng để chọn (' + aps.length + ').';
+        aps.forEach(function (ap) {
+          var li = document.createElement('li');
+          var left = document.createElement('span');
+          left.className = 'ssid';
+          left.textContent = ap.ssid;
+          var right = document.createElement('span');
+          right.className = 'meta';
+          right.textContent = (ap.secure ? '🔒 ' : '🔓 ') + bars(ap.rssi);
+          li.appendChild(left);
+          li.appendChild(right);
+          li.onclick = function () {
+            var nodes = listEl.querySelectorAll('li');
+            for (var i = 0; i < nodes.length; i++) nodes[i].classList.remove('selected');
+            li.classList.add('selected');
+            ssidEl.value = ap.ssid;
+            if (!ap.secure) {
+              passEl.value = '';
+              passEl.placeholder = 'Wi‑Fi mở — để trống';
+            } else {
+              passEl.placeholder = 'Nhập mật khẩu Wi‑Fi';
+              passEl.focus();
+            }
+          };
+          listEl.appendChild(li);
+        });
+      }
+
+      function loadScan() {
+        statusEl.textContent = 'Đang quét…';
+        btn.disabled = true;
+        fetch('/scan?_=' + Date.now())
+          .then(function (r) { return r.json(); })
+          .then(function (data) { render(data.aps || []); })
+          .catch(function () {
+            statusEl.textContent = 'Quét lỗi — nhập SSID thủ công.';
+          })
+          .then(function () { btn.disabled = false; });
+      }
+
+      function loadStatus() {
+        var embedded = (window.__LAST_FAIL_SSID__ || '').trim();
+        if (embedded && embedded.indexOf('{{') !== 0) {
+          showToast(
+            'Bạn đã nhập sai mật khẩu cho wifi "' + embedded + '" vui lòng nhập đúng mật khẩu.',
+            'warn'
+          );
+          if (!ssidEl.value) ssidEl.value = embedded;
+          passEl.focus();
+        }
+        fetch('/status?_=' + Date.now())
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            var fail = (data.lastFailSsid || '').trim();
+            if (!fail || fail === embedded) return;
+            showToast(
+              'Bạn đã nhập sai mật khẩu cho wifi "' + fail + '" vui lòng nhập đúng mật khẩu.',
+              'warn'
+            );
+            if (!ssidEl.value) ssidEl.value = fail;
+            passEl.focus();
+          })
+          .catch(function () {});
+      }
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var ssid = (ssidEl.value || '').trim();
+        var pass = passEl.value || '';
+        if (!ssid) {
+          showToast('SSID trống — chọn mạng hoặc nhập tên Wi‑Fi.', 'err');
+          return;
+        }
+        submitBtn.disabled = true;
+        var body = 'ssid=' + encodeURIComponent(ssid) + '&password=' + encodeURIComponent(pass);
+        fetch('/save', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json'
+          },
+          body: body
+        })
+          .then(function (r) {
+            return r.json().then(function (data) {
+              return { okHttp: r.ok, data: data };
+            });
+          })
+          .then(function (res) {
+            if (res.data && res.data.ok) {
+              showToast(res.data.message || ('Gửi thành công — robot đang nối "' + ssid + '". Nếu thất bại, hãy nối lại Wi‑Fi Mini rồi mở lại trang này.'), 'ok');
+            } else {
+              showToast((res.data && res.data.error) || 'Gửi thất bại.', 'err');
+              submitBtn.disabled = false;
+            }
+          })
+          .catch(function () {
+            // SoftAP có thể đã tắt — vẫn coi là đã gửi
+            showToast('Gửi thành công. Hotspot robot có thể vừa tắt — xem mắt robot. Nếu bắt Wi‑Fi thất bại, hãy nối lại Wi‑Fi Mini rồi mở lại trang này.', 'ok');
+          });
+      });
+
+      btn.onclick = loadScan;
+      loadScan();
+      loadStatus();
+    })();
+  </script>
+</body>
+</html>

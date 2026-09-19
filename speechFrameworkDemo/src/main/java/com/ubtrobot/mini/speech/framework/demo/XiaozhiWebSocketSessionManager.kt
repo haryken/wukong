@@ -21,6 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
@@ -31,8 +32,9 @@ import java.nio.ByteOrder
 import java.util.Locale
 
 /**
- * Xiaozhi voice session qua WebSocket.
- * @param audioSessionId Session dùng chung với AudioRecord (AEC).
+ * Xiaozhi voice session qua WebSocket — **luồng giao tiếp = commit 2b23f8d** (y chang).
+ * Chỉ bổ sung Self-Control: [isAudioChannelOpened] / [switchDeviceIdentity] / [recoverTalkAfterShowConfig]
+ * + mute TTS URL (không đụng wake/TTS/listen/PCM/AEC timing).
  */
 class XiaozhiWebSocketSessionManager(
     private val context: Context,
@@ -54,6 +56,16 @@ class XiaozhiWebSocketSessionManager(
 ) : XiaozhiSessionApi {
     override fun getTransportLabel(): String = "WebSocket"
 
+    /** Tắt âm TTS khi server đọc URL / tên tool show_config. */
+    @Volatile
+    private var muteTtsUrlLeak = false
+
+    private fun looksLikeConfigUrlOrToolLeakTts(text: String): Boolean {
+        val t = text.lowercase(Locale.ROOT)
+        return t.contains("http://") || t.contains("https://") || t.contains(":8080") ||
+            t.contains("show_config") || (t.contains("192.168.") && t.contains("self"))
+    }
+
     companion object {
         private const val TAG = "XiaozhiWS"
         const val SAMPLE_RATE = 16000
@@ -64,7 +76,14 @@ class XiaozhiWebSocketSessionManager(
 
         @JvmStatic
         fun noteRobotSkillPcmSuppress(durationMs: Long, reason: String) {
-            XiaozhiSessionManager.noteRobotSkillPcmSuppress(durationMs, reason)
+            // Flag nằm companion này — pcmBlockReason() đọc tại đây (không ủy quyền vòng về SessionManager).
+            if (durationMs <= 0) return
+            val until = System.currentTimeMillis() + durationMs
+            if (until > suppressServerPcmForSkillUntilMs) {
+                suppressServerPcmForSkillUntilMs = until
+                refreshSessionAfterNextTtsStop = true
+                Log.i(TAG, "[Skill] chặn PCM server ~${durationMs / 1000}s ($reason)")
+            }
         }
         /** Delay rất ngắn sau TTS stop rồi chờ phát xong – giao tiếp liên tục, mở mic sớm. */
         private const val MIC_DELAY_MS_AFTER_TTS = 60L
@@ -375,6 +394,7 @@ class XiaozhiWebSocketSessionManager(
             try {
                 var pcmFlow = flow {
                     protocol.incomingAudioFlow.collect { opus: ByteArray ->
+                        if (muteTtsUrlLeak) return@collect
                         decoder.decode(opus)?.let { emit(it) }
                     }
                 }
@@ -410,7 +430,17 @@ class XiaozhiWebSocketSessionManager(
                                 sessionClosedAwaitWake = true
                                 Log.i(TAG, "[Session] STT kết thúc hội thoại – sau TTS/WS đóng không tự reopen")
                             }
-                            // Skill robot chỉ qua MCP tools/call — không khớp keyword STT (tránh chạy 2 lần).
+                            // Fallback local (không đụng timing WS): show QR / shift unit nếu server không gọi MCP.
+                            try {
+                                DemoSpeech.tryLocalShowConfigFromStt(text)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "tryLocalShowConfigFromStt: ${e.message}")
+                            }
+                            try {
+                                DemoSpeech.tryLocalShiftUnitFromStt(text)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "tryLocalShiftUnitFromStt: ${e.message}")
+                            }
                         }
                         "mcp" -> {
                             scope.launch {
@@ -442,6 +472,7 @@ class XiaozhiWebSocketSessionManager(
                     if (type == "tts") {
                         when (json.optString("state")) {
                             "start" -> {
+                                muteTtsUrlLeak = false
                                 if (heyMiniJustTriggered && suppressServerPcmUntilFirstGreetingDone) {
                                     onTtsStarted?.invoke()
                                     return@collect
@@ -462,12 +493,20 @@ class XiaozhiWebSocketSessionManager(
                                     return@collect
                                 }
                                 if (lastTtsStopClearedAt != 0L) lastTtsStopClearedAt = 0L
+                                val sentence = json.optString("text", "")
+                                if (looksLikeConfigUrlOrToolLeakTts(sentence)) {
+                                    muteTtsUrlLeak = true
+                                    Log.w(TAG, "Mute TTS – không đọc URL/tool: \"$sentence\"")
+                                } else {
+                                    muteTtsUrlLeak = false
+                                }
                                 if (protocol.isAudioChannelOpened()) {
                                     isTtsPlaying = true
                                     isTtsPlayingSinceMs = System.currentTimeMillis()
                                 }
                             }
                             "end", "stop" -> {
+                                muteTtsUrlLeak = false
                                 val ttsDurationMs = if (isTtsPlayingSinceMs != 0L) System.currentTimeMillis() - isTtsPlayingSinceMs else 0L
                                 val longTts = ttsDurationMs >= LONG_TTS_REOPEN_THRESHOLD_MS
                                 val afterRobotSkill = refreshSessionAfterNextTtsStop
@@ -840,6 +879,77 @@ class XiaozhiWebSocketSessionManager(
             } catch (e: Exception) {
                 Log.e(TAG, "send error: " + e.message, e)
             }
+        }
+    }
+
+    override fun isAudioChannelOpened(): Boolean = protocol.isAudioChannelOpened()
+
+    /**
+     * Log thiết bị: show_config + vẽ mắt đôi khi làm SSL WS abort ngay sau đó.
+     * Tự mở lại kênh vài lần trong ~12s — không bắt hey mini.
+     */
+    override fun recoverTalkAfterShowConfig() {
+        scope.launch {
+            try {
+                for (attempt in 1..4) {
+                    delay(if (attempt == 1) 1_200L else 2_000L)
+                    if (protocol.isAudioChannelOpened()) {
+                        if (attempt > 1) {
+                            Log.i(TAG, "recoverTalkAfterShowConfig: WS đã sống lại (attempt=$attempt)")
+                        }
+                        return@launch
+                    }
+                    Log.w(TAG, "recoverTalkAfterShowConfig: WS chết sau hiện QR – mở lại (attempt=$attempt)")
+                    sessionClosedAwaitWake = false
+                    channelIntentionallyStale = false
+                    val ok = reopenChannelAndListen("sau show_config")
+                    if (ok) {
+                        Log.i(TAG, "recoverTalkAfterShowConfig: OK – tiếp tục nói được")
+                        return@launch
+                    }
+                }
+                Log.w(TAG, "recoverTalkAfterShowConfig: hết retry – cần hey mini / chạm đầu")
+            } catch (e: Exception) {
+                Log.e(TAG, "recoverTalkAfterShowConfig: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * Self-Control ApplyDeviceIdentity only — không thuộc luồng nói chuyện thường.
+     * close → updateIdentity → open+listen giống wake.
+     */
+    override fun switchDeviceIdentity(deviceId: String, clientId: String): Boolean {
+        return try {
+            runBlocking {
+                forceStopPlaybackForHeyMini()
+                isTtsPlaying = false
+                isTtsPlayingSinceMs = 0L
+                ttsRecoveryGeneration++
+                try {
+                    protocol.closeAudioChannel()
+                } catch (_: Exception) {
+                }
+                protocol.updateIdentity(deviceId, clientId)
+                MiniRobotActionInvoker.setXiaozhiWireIdentities(deviceId, clientId)
+                XiaozhiMcpResponder.resetInitializeHandshake()
+                delay(200)
+                sessionClosedAwaitWake = false
+                channelIntentionallyStale = false
+                suppressServerPcmUntilFirstGreetingDone = true
+                heyMiniJustTriggered = true
+                val ok = reopenChannelAndListen("hey mini ApplyDeviceIdentity")
+                if (!ok) {
+                    suppressServerPcmUntilFirstGreetingDone = false
+                    heyMiniJustTriggered = false
+                } else {
+                    Log.i(TAG, "switchDeviceIdentity OK Device-Id=$deviceId")
+                }
+                ok
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "switchDeviceIdentity: ${e.message}", e)
+            false
         }
     }
 

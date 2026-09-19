@@ -14,6 +14,14 @@
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
   <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+  <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+  <!-- SoftAP / scan trên một số ROM -->
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+  <uses-permission
+      android:name="android.permission.WRITE_SETTINGS"
+      tools:ignore="ProtectedPermissions" />
   <!-- Fallback chụp ảnh vision khi Master/Sauron không có /api/camera (Camera2 + ImageReader) -->
   <uses-permission android:name="android.permission.CAMERA" />
   <uses-feature
@@ -56,7 +64,7 @@
     </service>
     <meta-data android:name="ubt-master-app" android:value="third_part_speechservice"/>
 
-    <!-- Run MicrophoneArrayService in separate process to avoid ANR during heavy init (MNPCLib, WeiNa, etc.) -->
+    <!-- Giống develop2222 / 2b23f8d: MicArray AAR thật, process :speech — Master cắt mic stock. -->
     <service
         android:name="com.ubtrobot.mini.speech.framework.MicrophoneArrayService"
         android:process=":speech" />

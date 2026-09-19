@@ -5,7 +5,7 @@ import android.util.Log
 
 /**
  * Facade Xiaozhi — delegate WebSocket hoặc MQTT tùy [XiaozhiTransportPreference].
- * Logic WebSocket: [XiaozhiWebSocketSessionManager]. Logic MQTT: [XiaozhiMqttSessionManager].
+ * Logic WebSocket: [XiaozhiWebSocketSessionManager] (= commit 2b23f8d).
  */
 class XiaozhiSessionManager private constructor(
     private val delegate: XiaozhiSessionApi
@@ -21,20 +21,10 @@ class XiaozhiSessionManager private constructor(
         const val FRAME_MS = XiaozhiWebSocketSessionManager.FRAME_MS
         const val PCM_GAIN_CONCENTUS = XiaozhiWebSocketSessionManager.PCM_GAIN_CONCENTUS
 
-        @Volatile
-        private var suppressServerPcmForSkillUntilMs = 0L
-        @Volatile
-        private var refreshSessionAfterNextTtsStop = false
-
         @JvmStatic
         fun noteRobotSkillPcmSuppress(durationMs: Long, reason: String) {
-            if (durationMs <= 0) return
-            val until = System.currentTimeMillis() + durationMs
-            if (until > suppressServerPcmForSkillUntilMs) {
-                suppressServerPcmForSkillUntilMs = until
-                refreshSessionAfterNextTtsStop = true
-                Log.i(TAG, "[Skill] chặn PCM server ~${durationMs / 1000}s ($reason)")
-            }
+            // Ủy quyền sang WS companion (pcmBlockReason đọc flag ở đó).
+            XiaozhiWebSocketSessionManager.noteRobotSkillPcmSuppress(durationMs, reason)
         }
 
         fun create(
@@ -106,5 +96,9 @@ class XiaozhiSessionManager private constructor(
     override fun onNewConversationTurn() = delegate.onNewConversationTurn()
     override fun wasWakeHandledRecently(): Boolean = delegate.wasWakeHandledRecently()
     override fun sendPcmFrameFromJava(frame: ByteArray) = delegate.sendPcmFrameFromJava(frame)
+    override fun isAudioChannelOpened(): Boolean = delegate.isAudioChannelOpened()
+    override fun recoverTalkAfterShowConfig() = delegate.recoverTalkAfterShowConfig()
+    override fun switchDeviceIdentity(deviceId: String, clientId: String): Boolean =
+        delegate.switchDeviceIdentity(deviceId, clientId)
     override fun dispose() = delegate.dispose()
 }

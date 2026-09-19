@@ -115,7 +115,10 @@ dependencies {
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4"
   implementation "com.squareup.okhttp3:okhttp:3.12.12"
   implementation "org.json:json:20180813"
+  // QR Self-Control trên mắt (show_config_page)
+  implementation "com.google.zxing:core:3.4.1"
 
+  // Giống develop2222 / 2b23f8d: AAR speechFramework NGUYÊN (có MicrophoneArrayService thật) — mới đè được stock.
   implementation(name: 'speechFramework-oversea-release', ext: 'aar')
   implementation(name: 'behavior-lib-1.0.0', ext: 'aar')
   implementation(name: 'impl-wakeup-dingdang-1.0.0', ext: 'aar')

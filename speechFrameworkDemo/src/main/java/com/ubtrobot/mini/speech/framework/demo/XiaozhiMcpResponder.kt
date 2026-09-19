@@ -120,18 +120,62 @@ object XiaozhiMcpResponder {
                     val nm = params?.optString("name", "") ?: ""
                     Log.i(TAG, "mcp tools/call (trước xử lý) name=\"$nm\"")
                     MiniRobotActionInvoker.noteMcpToolInvoked(nm)
-                    val toolResultStr: String
-                    if (nm.equals("self.camera.take_photo", ignoreCase = true)) {
-                        val arguments = params?.optJSONObject("arguments")
-                        val question = arguments?.optString("question", "")?.trim().orEmpty()
-                            .ifEmpty { "Hãy mô tả ảnh chụp từ robot." }
-                        val pair = withContext(Dispatchers.IO) {
-                            MiniRobotActionInvoker.takePhotoAndExplainVision(question)
+                    val toolResultStr: String = when {
+                        nm.equals("self.camera.take_photo", ignoreCase = true) -> {
+                            val arguments = params?.optJSONObject("arguments")
+                            val question = arguments?.optString("question", "")?.trim().orEmpty()
+                                .ifEmpty { "Hãy mô tả ảnh chụp từ robot." }
+                            val pair = withContext(Dispatchers.IO) {
+                                MiniRobotActionInvoker.takePhotoAndExplainVision(question)
+                            }
+                            toolCallResultBody(pair.first, pair.second)
                         }
-                        toolResultStr = toolCallResultBody(pair.first, pair.second)
-                    } else {
-                        MiniRobotActionInvoker.dispatchFromXiaozhiJson(root)
-                        toolResultStr = toolCallResultBody(true, "ok")
+                        nm.equals("self.otto.get_student_info", ignoreCase = true)
+                            || nm.equals("self.mini.get_student_info", ignoreCase = true) -> {
+                            toolCallResultBody(true, DemoSpeech.selfControlGetStudentInfoJson())
+                        }
+                        nm.equals("self.otto.show_config_page", ignoreCase = true)
+                            || nm.equals("self.mini.show_config_page", ignoreCase = true) -> {
+                            val msg = withContext(Dispatchers.IO) {
+                                DemoSpeech.selfControlShowConfigPage()
+                            }
+                            toolCallResultBody(true, msg)
+                        }
+                        nm.equals("self.otto.set_course", ignoreCase = true)
+                            || nm.equals("self.mini.set_course", ignoreCase = true) -> {
+                            val arguments = params?.optJSONObject("arguments")
+                            val idx = arguments?.optInt("course_idx", -1) ?: -1
+                            val mac = arguments?.optString("custom_mac", "")?.trim().orEmpty()
+                            if (idx !in 0..7) {
+                                toolCallResultBody(false, "course_idx must be 0..7")
+                            } else {
+                                val r = DemoSpeech.selfControlSetCourse(idx, mac.ifEmpty { null })
+                                toolCallResultBody(true, r)
+                            }
+                        }
+                        nm.equals("self.otto.shift_unit", ignoreCase = true)
+                            || nm.equals("self.mini.shift_unit", ignoreCase = true)
+                            || nm.equals("self.otto.next_unit", ignoreCase = true)
+                            || nm.equals("self.mini.next_unit", ignoreCase = true)
+                            || nm.equals("self.otto.prev_unit", ignoreCase = true)
+                            || nm.equals("self.mini.prev_unit", ignoreCase = true) -> {
+                            val arguments = params?.optJSONObject("arguments")
+                            val dir = when {
+                                nm.contains("next_unit", ignoreCase = true) -> "next"
+                                nm.contains("prev_unit", ignoreCase = true) -> "prev"
+                                else -> arguments?.optString("direction", "next")?.trim().orEmpty()
+                                    .ifEmpty { "next" }
+                            }
+                            val r = DemoSpeech.selfControlShiftUnit(dir)
+                            // Text ngắn để TTS đọc tên unit, không dump JSON.
+                            val jo = org.json.JSONObject(r)
+                            val msg = jo.optString("message", r)
+                            toolCallResultBody(jo.optBoolean("success", false), msg)
+                        }
+                        else -> {
+                            MiniRobotActionInvoker.dispatchFromXiaozhiJson(root)
+                            toolCallResultBody(true, "ok")
+                        }
                     }
                     sendRpcResult(protocol, sessionId, idNum, JSONObject(toolResultStr))
                     Log.i(TAG, "mcp: đã trả tools/call id=$idNum")
@@ -257,6 +301,90 @@ object XiaozhiMcpResponder {
                     "self.otto.stop",
                     "Dừng mọi hành động, gồm chế độ khám phá (explore) và motion đang chạy (ActionApi.stopAction)."
                 )
+            )
+            // Self-Control (Otto parity)
+            put(
+                toolDef(
+                    "self.otto.get_student_info",
+                    "Trả thông tin học viên / khóa học / unit / Device-Id (Self-Control). Dùng khi hỏi 'tao là ai / đang học gì'."
+                )
+            )
+            put(
+                toolDef(
+                    "self.otto.show_config_page",
+                    "Hiện mã QR trang cấu hình Self-Control trên mắt robot (60 giây). " +
+                        "Dùng khi nói 'mở cài đặt', 'mở trang cấu hình', 'hiện QR'. " +
+                        "Chỉ nói ngắn: 'Đã mở mã QR.' — tuyệt đối KHÔNG đọc URL, IP, đường dẫn, http, :8080."
+                )
+            )
+            put(toolDefSetCourse())
+            put(toolDefShiftUnit())
+        }
+
+    private fun toolDefShiftUnit(): JSONObject =
+        JSONObject().apply {
+            put("name", "self.otto.shift_unit")
+            put(
+                "description",
+                "Chọn unit tiếp theo hoặc unit trước trong khóa + sách đang học (Self-Control). " +
+                    "Dùng khi nói 'unit tiếp theo', 'bài tiếp theo', 'unit trước', 'bài trước'. " +
+                    "Tự đọc cấp độ hiện tại; hết unit thì sang sách con kế tiếp nếu có. " +
+                    "Trả lời ngắn tên unit — không đổi MAC/Device-Id."
+            )
+            put(
+                "inputSchema",
+                JSONObject().apply {
+                    put("type", "object")
+                    put(
+                        "properties",
+                        JSONObject().apply {
+                            put(
+                                "direction",
+                                JSONObject().apply {
+                                    put("type", "string")
+                                    put("description", "next | prev")
+                                }
+                            )
+                        }
+                    )
+                    put("required", JSONArray().put("direction"))
+                }
+            )
+        }
+
+    private fun toolDefSetCourse(): JSONObject =
+        JSONObject().apply {
+            put("name", "self.otto.set_course")
+            put(
+                "description",
+                "Đổi khóa học Self-Control (course_idx 0..7). Đổi khóa → ApplyDeviceIdentity + tự chào. " +
+                    "idx 6 cần custom_mac aa:bb:cc:dd:ee:ff. idx 7 = giao tiếp hằng ngày (random MAC pool)."
+            )
+            put(
+                "inputSchema",
+                JSONObject().apply {
+                    put("type", "object")
+                    put(
+                        "properties",
+                        JSONObject().apply {
+                            put(
+                                "course_idx",
+                                JSONObject().apply {
+                                    put("type", "integer")
+                                    put("description", "0 custom … 7 daily_chat")
+                                }
+                            )
+                            put(
+                                "custom_mac",
+                                JSONObject().apply {
+                                    put("type", "string")
+                                    put("description", "MAC khi course_idx=0 hoặc 6")
+                                }
+                            )
+                        }
+                    )
+                    put("required", JSONArray().put("course_idx"))
+                }
             )
         }
 

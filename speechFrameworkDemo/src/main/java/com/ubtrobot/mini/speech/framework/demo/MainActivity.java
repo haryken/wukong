@@ -54,9 +54,26 @@ public class MainActivity extends AppCompatActivity {
       hint.setText(R.string.main_background_hint);
     }
 
-    setupTransportSelector();
+    try {
+      com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlStore.INSTANCE
+          .init(getApplicationContext());
+      com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlHttpServer.INSTANCE
+          .start(getApplicationContext());
+      TextView deviceIdView2 = findViewById(R.id.device_id);
+      if (deviceIdView2 != null) {
+        String url = com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlHttpServer.INSTANCE
+            .configUrl();
+        String did = com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlStore.INSTANCE
+            .resolveDeviceId();
+        deviceIdView2.setText("Self-Control: " + url + "\nDevice-Id: " + did);
+      }
+    } catch (Exception e) {
+      android.util.Log.w("MainActivity", "Self-Control UI: " + e.getMessage());
+    }
 
-    // Stack đã start trong SpeechApplication — không gọi lại để tránh startId spam.
+    setupTransportSelector();
+    // Không moveTaskToBack: speech chạy qua KeepAliveService; đẩy UI xuống
+    // khiến mỗi lần bấm icon app bị “force” ra launcher.
   }
 
   private void setupTransportSelector() {
