@@ -370,9 +370,16 @@ object DemoSpeech : SpeechModuleFactory() {
         } catch (_: Exception) {
         }
         Handler(Looper.getMainLooper()).post {
-            SafeWakeTing.playAsync(appContext, "online-ready")
+            // Giống 2b23f8d: WakeupAudioPlayer (không SafeWakeTing).
+            try {
+                WakeupAudioPlayer.get(appContext).play()
+            } catch (_: Exception) {
+            }
             Handler(Looper.getMainLooper()).postDelayed({
-                SafeWakeTing.playAsync(appContext, "online-ready-2")
+                try {
+                    WakeupAudioPlayer.get(appContext).play()
+                } catch (_: Exception) {
+                }
             }, 160L)
         }
         Thread({
@@ -448,7 +455,10 @@ object DemoSpeech : SpeechModuleFactory() {
                 LogUtils.i(TAG, "[WakeWord] mic started – sherpa ready, say HEY MINI")
                 if (!localReadySignaled) {
                     localReadySignaled = true
-                    SafeWakeTing.playAsync(appContext, "sherpa-ready")
+                    try {
+                        WakeupAudioPlayer.get(appContext).play()
+                    } catch (_: Exception) {
+                    }
                 }
             } else {
                 LogUtils.e(TAG, "[WakeWord] sherpa not ready – check sherpa-kws ONNX bundle")
@@ -600,10 +610,10 @@ object DemoSpeech : SpeechModuleFactory() {
             audioSessionId = audioSessionId,
             onTtsStarted = {
                 Handler(Looper.getMainLooper()).post {
-                    // ChatViewModel: chỉ suppress KWS ngắn lúc loa TTS (không sticky greeting).
-                    if (xiaozhiSessionRef?.isPlaybackOrGreetingActive() == true) {
-                        LogUtils.d(TAG, "[WakeWord] TTS đang phát – suppress KWS ngắn (echo loa)")
-                        wakeUpDetectorRef?.suppressWakeFor(3_000L)
+                    // Giống 2b23f8d: suppress dài khi TTS chào (greeting), ngắn khi TTS thường.
+                    if (xiaozhiSessionRef?.isInFirstGreetingPhase() == true) {
+                        LogUtils.d(TAG, "[WakeWord] TTS chào – suppress KWS đến sau ting (echo loa)")
+                        wakeUpDetectorRef?.suppressWakeFor(12_000L)
                     } else {
                         wakeUpDetectorRef?.suppressWakeFor(800L)
                     }
@@ -697,9 +707,9 @@ object DemoSpeech : SpeechModuleFactory() {
                     LogUtils.w(TAG, "ApplyDeviceIdentity dispose: ${e.message}")
                 }
 
-                // Fallback recreate: đợi NAT/TLS nhả trước khi mở TCP mới.
+                // Fallback recreate: nghỉ ngắn rồi mở TCP (không sleep 500ms như bản sau).
                 try {
-                    Thread.sleep(500)
+                    Thread.sleep(100)
                 } catch (_: InterruptedException) {
                 }
 
@@ -1190,8 +1200,15 @@ object DemoSpeech : SpeechModuleFactory() {
     }
 
     private fun playWakeTingNow(reason: String) {
-        // Không play trên main — AudioPolicy chết → SoundPool.play() treo → ANR.
-        SafeWakeTing.playAsync(appContext, reason)
+        // Giống 2b23f8d: WakeupAudioPlayer.play() (off-main để tránh ANR AudioPolicy).
+        Thread({
+            try {
+                WakeupAudioPlayer.get(appContext).play()
+                LogUtils.i(TAG, "[WakeWord] ting – $reason")
+            } catch (e: Exception) {
+                LogUtils.w(TAG, "ting wake: ${e.message}")
+            }
+        }, "WakeTing").start()
     }
 
     private fun flushPendingHeadWake(hostService: MasterSystemService, service: MasterSystemService) {
@@ -1221,7 +1238,7 @@ object DemoSpeech : SpeechModuleFactory() {
         }
     }
 
-  /** Chạm đầu / hey mini: ngắt TTS cũ + listen mới (giống hành vi thật 2b23f8d). */
+  /** Chạm đầu hoặc hey mini — forceReconnect chỉ khi chạm đầu (đúng 2b23f8d). */
   private fun handleManualWake(
       hostService: MasterSystemService,
       service: MasterSystemService,
@@ -1231,8 +1248,7 @@ object DemoSpeech : SpeechModuleFactory() {
     if (fromHeadTouch) {
       wakeUpDetectorRef?.lastDetectedKeyword = "HEY MINI"
     }
-    // forceReconnect=true chỉ clear debounce; khi WS mở vẫn ngắt+listen (không đóng WS).
-    handleWakeup(hostService, null, service, forceReconnect = true, playTing = playTing)
+    handleWakeup(hostService, null, service, forceReconnect = fromHeadTouch, playTing = playTing)
   }
 
     private fun handleWakeup(hostService: MasterSystemService,
@@ -1243,19 +1259,23 @@ object DemoSpeech : SpeechModuleFactory() {
         val kw = wakeUpDetectorRef?.lastDetectedKeyword?.takeIf { it.isNotBlank() } ?: "wake word"
         lastWakeAtMs = System.currentTimeMillis()
         LogUtils.i(TAG, "[WakeWord] handleWakeup – detected \"$kw\", force dừng phát + publish + start recognition")
-        // Ngắt loa TRƯỚC ting — giống 2b23f8d (forceStop rồi mới nghe turn mới).
-        (recognizer as? DemoRecognizer)?.forceStopForHeyMini()
+        // Thứ tự 2b23f8d: ting trước → suppress → forceStop → publish → startRecognition.
         if (playTing && xiaozhiSessionRef != null) {
-            playWakeTingNow("đánh thức OK (ngay khi wake)")
+            try {
+                WakeupAudioPlayer.get(appContext).play()
+                LogUtils.i(TAG, "[WakeWord] ting – đánh thức OK (ngay khi wake)")
+            } catch (e: Exception) {
+                LogUtils.w(TAG, "ting wake: ${e.message}")
+            }
         }
         // Không clearSuppressWake ở đây — tránh KWS nghe echo/ting/TTS chào (clear sau ting trong onFirstGreetingMicReady).
         wakeUpDetectorRef?.suppressWakeFor(14_000L)
+        (recognizer as? DemoRecognizer)?.forceStopForHeyMini()
         LogUtils.i(TAG, "[WakeWord] publish SPEECH_WAKEUP + ACTION_WAKE_UP")
         hostService.publishCarefully(
                 ServiceConstants.ACTION_SPEECH_WAKEUP,
                 ProtoParam.create(
                         WakeupParam.newBuilder().build()))
-        // After wake-up, publish so framework starts voice recognition (STT). Porcupine passes null → use dummy WakeUp.
         val wakeUpForPublish = wakeUp ?: createDummyWakeUp()
         if (wakeUpForPublish != null) {
             hostService.publishCarefully(SpeechConstants.ACTION_WAKE_UP,
@@ -1264,42 +1284,17 @@ object DemoSpeech : SpeechModuleFactory() {
         } else {
             LogUtils.e(TAG, "ACTION_WAKE_UP NOT published (dummy WakeUp failed), recognizer may not start.")
         }
-        LogUtils.i(TAG, "[WakeWord] startRecognitionAfterWakeup → onWake (chờ bootstrap, không reconnect MQTT trùng)")
+        LogUtils.i(TAG, "[WakeWord] startRecognitionAfterWakeup → onWake")
         (recognizer as? DemoRecognizer)?.startRecognitionAfterWakeup(forceReconnect)
 
-//        val o: RecognitionOption = RecognitionOption.Builder(
-//                RecognitionOption.MODE_SINGLE).setUnderstandingOption(
-//                Builder().setSessionId(
-//                        UUID.randomUUID().toString()).build()).build()
-//        val callAdapter = ParcelableSessionCallAdapter2(
-//                service, "speech",
-//                service.openCompetitionSession().addCompeting {
-//                    listOf(CompetingItem("speech", "recognizer"))
-//                })
-//        val promise: ProgressivePromise<RecognitionResult, RecognitionException, RecognitionProgress> = callAdapter.callStickily(
-//                "/speech/recognize", o,
-//                RecognitionResult::class.java,
-//                RecognitionProgress::class.java
-//        ) { e ->
-//            RecognitionException(
-//                    CallExceptionTranslator2.translate(e), e.subCode,
-//                    e.message)
-//        }
-//        promise.done {
-//            //处理成功结果
-//        }
-//        promise.fail {
-//            //处理失败结果
-//        }
-//        promise.progress {
-//            //处理中间结果
-//        }
-
-        // Xiaozhi: ting wake ngay (đã play ở đầu / head immediate). Không Xiaozhi: ting tại đây.
         if (playTing && xiaozhiSessionRef == null) {
-            playWakeTingNow("đánh thức (không Xiaozhi)")
+            try {
+                WakeupAudioPlayer.get(appContext).play()
+                LogUtils.i(TAG, "[WakeWord] ting – đánh thức (không Xiaozhi)")
+            } catch (e: Exception) {
+                LogUtils.w(TAG, "ting wake: ${e.message}")
+            }
         }
-        //clear motor protected flag
         ThreadPool.runOnNonUIThread {
             MotorApi.get().clearProtectFlag(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
                     14)
