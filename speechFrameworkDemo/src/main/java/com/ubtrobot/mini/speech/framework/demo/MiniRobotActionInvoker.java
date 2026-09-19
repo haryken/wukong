@@ -993,6 +993,10 @@ public final class MiniRobotActionInvoker {
         if (emotion == null || emotion.isEmpty()) {
             return;
         }
+        if (ActivationEyeDisplay.isMusicExpressActive()) {
+            Log.i(TAG, "LLM emotion \"" + emotion + "\" bỏ qua — đang express phát nhạc");
+            return;
+        }
         if (ActivationEyeDisplay.isQrShowing()) {
             Log.i(TAG, "LLM emotion \"" + emotion + "\" bỏ qua — đang hiện QR cấu hình trên mắt");
             return;

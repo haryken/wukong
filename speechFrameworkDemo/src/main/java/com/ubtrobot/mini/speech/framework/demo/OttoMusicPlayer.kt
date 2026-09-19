@@ -549,6 +549,11 @@ object OttoMusicPlayer {
             started.set(true)
             Log.i(TAG, "Playing: $title")
             it.start()
+            try {
+                ActivationEyeDisplay.showMusicPlayingEyes()
+            } catch (e: Exception) {
+                Log.w(TAG, "showMusicPlayingEyes: ${e.message}")
+            }
             exec.execute {
                 try {
                     DemoSpeech.enterMusicOnlyMode()
@@ -561,12 +566,20 @@ object OttoMusicPlayer {
         mp.setOnCompletionListener {
             Log.i(TAG, "Playback finished: $title")
             playing.set(false)
+            try {
+                ActivationEyeDisplay.clearMusicPlayingEyes()
+            } catch (_: Exception) {
+            }
             releasePlayer()
             notifyFinished()
         }
         mp.setOnErrorListener { _, what, extra ->
             Log.e(TAG, "MediaPlayer error what=$what extra=$extra")
             playing.set(false)
+            try {
+                ActivationEyeDisplay.clearMusicPlayingEyes()
+            } catch (_: Exception) {
+            }
             releasePlayer()
             latch.countDown()
             true
@@ -598,6 +611,10 @@ object OttoMusicPlayer {
     private fun stopInternal(clearSession: Boolean, notifyFail: Boolean) {
         stopRequested.set(true)
         playing.set(false)
+        try {
+            ActivationEyeDisplay.clearMusicPlayingEyes()
+        } catch (_: Exception) {
+        }
         if (clearSession) {
             active.set(false)
             DemoSpeech.exitMusicOnlyMode()
@@ -646,6 +663,10 @@ object OttoMusicPlayer {
     }
 
     private fun notifySearchFailed(reason: String) {
+        try {
+            ActivationEyeDisplay.clearMusicPlayingEyes()
+        } catch (_: Exception) {
+        }
         if (stopRequested.get()) {
             Log.i(TAG, "Skip NotifyMusicSearchFailed (stopped): $reason")
             playing.set(false)
@@ -663,6 +684,10 @@ object OttoMusicPlayer {
     }
 
     private fun notifyFinished() {
+        try {
+            ActivationEyeDisplay.clearMusicPlayingEyes()
+        } catch (_: Exception) {
+        }
         if (stopRequested.get()) {
             playing.set(false)
             active.set(false)

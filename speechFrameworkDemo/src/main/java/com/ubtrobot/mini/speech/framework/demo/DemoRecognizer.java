@@ -197,7 +197,7 @@ public class DemoRecognizer extends AbstractRecognizer {
           pcmAlign.write(data, offset, data.length - offset);
         }
         long now = System.currentTimeMillis();
-        if (now - lastLogNs > 3000) {
+        if (now - lastLogNs > 10000) {
           String sendStatus;
           if (xiaozhiSessionManager == null) {
             sendStatus = ", NOT sending (no libapp.so - add lib to enable STT/TTS)";

@@ -81,6 +81,13 @@ public class ActivationEyeDisplay {
   private static volatile long lastSmileAtMs = 0L;
   private static final long SMILE_DEBOUNCE_MS = 2500L;
 
+  /** Đang hiện streaming_media_* suốt lúc Otto phát nhạc — tắt khi hết/stop / mở lại WS. */
+  private static final AtomicBoolean musicExpressActive = new AtomicBoolean(false);
+  private static final AtomicInteger musicExpressEpoch = new AtomicInteger(0);
+  private static final String[] MUSIC_PLAYING_EXPRESS = {
+      "streaming_media_001", "streaming_media_002"
+  };
+
   /** IP 1 dòng — chữ rất nhỏ để không xuống dòng / tràn. */
   private static final float IP_MAX_TEXT_SIZE = 11f;
   private static final float IP_MIN_TEXT_SIZE = 7f;
@@ -155,6 +162,10 @@ public class ActivationEyeDisplay {
       Log.i(TAG, "showWakeupSmileEyes skipped – QR đang hiện");
       return;
     }
+    if (musicExpressActive.get()) {
+      Log.i(TAG, "showWakeupSmileEyes skipped – đang phát nhạc (streaming_media)");
+      return;
+    }
     long now = System.currentTimeMillis();
     if (now - lastSmileAtMs < SMILE_DEBOUNCE_MS) {
       Log.d(TAG, "showWakeupSmileEyes debounced");
@@ -167,8 +178,8 @@ public class ActivationEyeDisplay {
     lastSmileAtMs = now;
     new Thread(() -> {
       try {
-        if (qrShowing.get()) {
-          Log.i(TAG, "showWakeupSmileEyes aborted – QR đang hiện");
+        if (qrShowing.get() || musicExpressActive.get()) {
+          Log.i(TAG, "showWakeupSmileEyes aborted – QR/nhạc đang hiện");
           return;
         }
         ExpressApi api;
@@ -180,6 +191,7 @@ public class ActivationEyeDisplay {
         }
         for (String name : LISTEN_READY_SMILE) {
           try {
+            if (musicExpressActive.get() || qrShowing.get()) return;
             CountDownLatch done = new CountDownLatch(1);
             api.doExpress(name, 1, Priority.HIGH, new AnimationListener() {
               @Override public void onAnimationStart() {
@@ -1158,9 +1170,98 @@ public class ActivationEyeDisplay {
     }
   }
 
+  /**
+   * Lúc MediaPlayer start: chọn ngẫu nhiên {@code streaming_media_001} hoặc {@code _002}.
+   * Chạy liên tục (loop lớn) — <b>không</b> stopExpress định kỳ (trước đó reclaim ~700ms
+   * cắt GIF ~12s → chớp xen mắt thường). Chỉ stop khi {@link #clearMusicPlayingEyes()}.
+   */
+  public static void showMusicPlayingEyes() {
+    if (qrShowing.get()) {
+      Log.i(TAG, "showMusicPlayingEyes bỏ qua – QR đang hiện");
+      return;
+    }
+    final String name =
+        MUSIC_PLAYING_EXPRESS[(int) (Math.random() * MUSIC_PLAYING_EXPRESS.length)];
+    final int epoch = musicExpressEpoch.incrementAndGet();
+    musicExpressActive.set(true);
+    Log.i(TAG, "showMusicPlayingEyes express=" + name + " epoch=" + epoch + " (loop liên tục, không reclaim)");
+    new Thread(() -> {
+      while (musicExpressActive.get()
+          && musicExpressEpoch.get() == epoch
+          && !qrShowing.get()) {
+        try {
+          ExpressApi api = ExpressApi.get();
+          CountDownLatch done = new CountDownLatch(1);
+          // loopCount lớn: ROM map vào gif loop — tránh cắt giữa chừng.
+          api.doExpress(name, 9999, Priority.HIGH, new AnimationListener() {
+            @Override public void onAnimationStart() {
+            }
+
+            @Override public void onAnimationEnd(int i) {
+              done.countDown();
+            }
+
+            @Override public void onAnimationRepeat(int loopNumber) {
+            }
+          });
+          // Chờ hết chuỗi loop hoặc bị clear — không stopExpress ở đây.
+          while (musicExpressActive.get()
+              && musicExpressEpoch.get() == epoch
+              && !qrShowing.get()) {
+            if (done.await(500, TimeUnit.MILLISECONDS)) {
+              break;
+            }
+          }
+          // Hết loop tự nhiên mà nhạc vẫn chạy → phát lại (không stopExpress trước).
+          if (!musicExpressActive.get() || musicExpressEpoch.get() != epoch) {
+            break;
+          }
+          Log.i(TAG, "showMusicPlayingEyes replay express=" + name);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          break;
+        } catch (Exception e) {
+          Log.w(TAG, "showMusicPlayingEyes: " + e.getMessage());
+          try {
+            Thread.sleep(1000);
+          } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            break;
+          }
+        }
+      }
+      Log.i(TAG, "showMusicPlayingEyes loop end express=" + name + " epoch=" + epoch);
+    }, "MusicPlayingEyes").start();
+  }
+
+  /** Hết nhạc / stop / lỗi — tắt streaming_media, restore mắt thường (trước khi mở lại WS). */
+  public static void clearMusicPlayingEyes() {
+    musicExpressEpoch.incrementAndGet();
+    boolean was = musicExpressActive.getAndSet(false);
+    if (!was) return;
+    Log.i(TAG, "clearMusicPlayingEyes");
+    if (qrShowing.get()) return;
+    new Thread(() -> {
+      try {
+        ExpressApi.get().stopExpress();
+      } catch (Exception ignored) {
+      }
+      restoreNormalEyesFast();
+    }, "ClearMusicEyes").start();
+  }
+
+  /** True khi đang giữ express phát nhạc (để chỗ khác khỏi đè wakeup/smile). */
+  public static boolean isMusicExpressActive() {
+    return musicExpressActive.get();
+  }
+
   private static void restoreNormalEyes() {
     if (qrShowing.get()) {
       Log.i(TAG, "restoreNormalEyes skipped – QR đang hiện");
+      return;
+    }
+    if (musicExpressActive.get()) {
+      Log.i(TAG, "restoreNormalEyes skipped – đang phát nhạc");
       return;
     }
     try {
@@ -1212,6 +1313,10 @@ public class ActivationEyeDisplay {
   private static void restoreNormalEyesFast() {
     if (qrShowing.get()) {
       Log.i(TAG, "restoreNormalEyesFast skipped – QR đang hiện");
+      return;
+    }
+    if (musicExpressActive.get()) {
+      Log.i(TAG, "restoreNormalEyesFast skipped – đang phát nhạc");
       return;
     }
     try {

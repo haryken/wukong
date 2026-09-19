@@ -1,6 +1,7 @@
 package com.ubtrobot.mini.speech.framework.demo
 
 import android.content.Context
+import android.os.Process
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
@@ -35,6 +36,11 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
     private const val KEYWORDS_SCORE = 2.0f
     private const val KEYWORDS_THRESHOLD = 0.12f
     private const val MAX_ACTIVE_PATHS = 4
+    /**
+     * Khi phát nhạc local: chỉ decode 1/N chunk (vẫn feed waveform đủ để stream không lệch).
+     * N=2 ≈ giảm ~một nửa CPU KWS lúc MediaPlayer + proxy đang chạy.
+     */
+    private const val MUSIC_DECODE_EVERY_N = 2
 
     /** Chỉ publish wake cho hey mini / hi mini — keywords.txt có thêm HEY SIRI để test nhưng không dùng làm wake. */
     private fun isHeyMiniKeyword(normalizedUpper: String): Boolean {
@@ -60,15 +66,18 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
   @Volatile private var suppressWakeUntilMs = 0L
   private var pcmQueueDrops = 0
   private var pcmChunksDecoded = 0L
+  private var pcmChunksSkippedMusic = 0L
   private var lastAliveLogMs = 0L
   private val loggedFirstPcm = AtomicBoolean(false)
 
   private val worker = Thread({
+    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
     var kws: KeywordSpotter? = null
     var stream: OnlineStream? = null
     val pcmAccum = FloatArray(CHUNK_SAMPLES)
     var pcmFill = 0
     var lastWakeMs = 0L
+    var musicDecodeCounter = 0
 
     fun releaseNative() {
       try {
@@ -108,8 +117,15 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
 
     fun processPcm(frame: ByteArray) {
       if (!streamReady.get()) return
+      // Đang suppress (TTS chào / echo) — không decode ONNX = tiết CPU rõ khi robot nói.
+      if (System.currentTimeMillis() < suppressWakeUntilMs) return
       val spotter = kws ?: return
       val st = stream ?: return
+      val musicPlaying = try {
+        OttoMusicPlayer.isPlaying()
+      } catch (_: Throwable) {
+        false
+      }
       val n = frame.size / 2
       var off = 0
       while (off < n) {
@@ -124,15 +140,24 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
         off += take
         if (pcmFill < CHUNK_SAMPLES) continue
 
+        // Lúc phát nhạc: bỏ cả accept+decode 1/N chunk (tránh backlog isReady).
+        if (musicPlaying && MUSIC_DECODE_EVERY_N > 1) {
+          musicDecodeCounter++
+          if (musicDecodeCounter % MUSIC_DECODE_EVERY_N != 0) {
+            pcmFill = 0
+            pcmChunksSkippedMusic++
+            continue
+          }
+        }
         st.acceptWaveform(pcmAccum, SAMPLE_RATE)
         pcmFill = 0
         pcmChunksDecoded++
         val nowMs = System.currentTimeMillis()
-        if (nowMs - lastAliveLogMs >= 5000L) {
+        if (nowMs - lastAliveLogMs >= 15_000L) {
           lastAliveLogMs = nowMs
           LogUtils.i(
             TAG,
-            "[WakeWord] PCM alive: $pcmChunksDecoded chunks decoded, queueDrops=$pcmQueueDrops"
+            "[WakeWord] PCM alive: decoded=$pcmChunksDecoded musicSkip=$pcmChunksSkippedMusic drops=$pcmQueueDrops"
           )
         }
         while (spotter.isReady(st)) {
@@ -217,14 +242,24 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
 
   override fun feedPcmFrame(frame: ByteArray) {
     if (!wantRunning || !streamReady.get() || frame.isEmpty()) return
+    // TTS/suppress: đừng copy+enqueue → giảm GC + CPU queue lúc loa đang phát.
+    if (System.currentTimeMillis() < suppressWakeUntilMs) return
     if (loggedFirstPcm.compareAndSet(false, true)) {
       LogUtils.i(TAG, "[WakeWord] first PCM frame from mic (${frame.size} bytes) → KWS queue")
+    }
+    // Hàng đợi đầy / gần đầy: bỏ frame (ưu tiên không block mic thread).
+    if (cmdQueue.remainingCapacity() < 64) {
+      pcmQueueDrops++
+      if (pcmQueueDrops == 1 || pcmQueueDrops % 100 == 0) {
+        LogUtils.w(TAG, "[WakeWord] PCM queue busy – dropped $pcmQueueDrops frames")
+      }
+      return
     }
     // Must copy: AudioRecord thread reuses one buffer; queue holds refs async on SherpaKwsWorker.
     val copy = frame.copyOf()
     if (!cmdQueue.offer(WorkerCmd.Pcm(copy))) {
       pcmQueueDrops++
-      if (pcmQueueDrops == 1 || pcmQueueDrops % 50 == 0) {
+      if (pcmQueueDrops == 1 || pcmQueueDrops % 100 == 0) {
         LogUtils.w(TAG, "[WakeWord] PCM queue full – dropped $pcmQueueDrops frames")
       }
     }

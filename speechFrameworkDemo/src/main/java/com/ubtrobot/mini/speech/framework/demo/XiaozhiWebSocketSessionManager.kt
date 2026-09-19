@@ -1163,8 +1163,8 @@ class XiaozhiWebSocketSessionManager(
                                     "sau dance cần restart mic"
                             )
                         }
-                        if (sendFrameCount <= 3 || sendFrameCount % 500 == 0L) {
-                            Log.i(TAG, "[GỬI AUDIO] encoded=${encoded.size} bytes, total frames=$sendFrameCount → nếu thấy log WS gửi thật = đã gửi lên server, không có [STT] = server không trả")
+                        if (sendFrameCount <= 3 || sendFrameCount % 2000 == 0L) {
+                            Log.i(TAG, "[GỬI AUDIO] encoded=${encoded.size} bytes, total frames=$sendFrameCount")
                         }
                         if (lastSttReceivedMs != 0L && now - lastSttReceivedMs > NO_STT_WARN_INTERVAL_MS && now - lastNoSttWarnMs > NO_STT_WARN_INTERVAL_MS) {
                             lastNoSttWarnMs = now
