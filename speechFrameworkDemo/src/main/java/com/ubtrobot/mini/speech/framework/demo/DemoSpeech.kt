@@ -310,7 +310,7 @@ object DemoSpeech : SpeechModuleFactory() {
                     xiaozhiAudioSessionId = audioSessionId
                     val xiaozhi = createXiaozhiSessionManager(audioSessionId)
                     xiaozhiSessionRef = xiaozhi
-                    // Ready mức 2 (online): session manager sẽ callback sau khi kênh đã mở + listen đã gửi.
+                    // Ready mức 2 (online): chỉ beep — StandUp đã gọi sớm ở SpeechBootstrap (ưu tiên đứng).
                     xiaozhi?.setOnWebSocketSessionReady {
                         if (onlineReadySignaled) return@setOnWebSocketSessionReady
                         onlineReadySignaled = true
@@ -327,14 +327,7 @@ object DemoSpeech : SpeechModuleFactory() {
                             } catch (_: Exception) {
                             }
                         }
-                        ThreadPool.runOnNonUIThread {
-                            try {
-                                LogUtils.i(TAG, "[Ready] Online ready → StandUp")
-                                MiniRobotActionInvoker.performStandUpSync()
-                            } catch (e: Exception) {
-                                LogUtils.w(TAG, "StandUp on online-ready: ${e.message}")
-                            }
-                        }
+                        LogUtils.i(TAG, "[Ready] Online ready (StandUp đã ưu tiên lúc bootstrap)")
                     }
                     val opusLabel = when {
                         xiaozhi == null -> "NULL (Opus init fail)"

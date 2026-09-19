@@ -35,6 +35,13 @@ public final class SpeechBootstrap {
             Log.w(TAG, "boot eye warm: " + t.getMessage());
         }
 
+        // Đứng dậy ưu tiên ngay khi app mở — không chờ DingDang / Xiaozhi Online ready.
+        try {
+            MiniRobotActionInvoker.requestInitialStandPose(0L);
+        } catch (Throwable t) {
+            Log.w(TAG, "boot StandUp: " + t.getMessage());
+        }
+
         startIfNotRunning(app, DemoMasterService.class);
         startIfNotRunning(app, MicrophoneArrayService.class);
         startKeepAliveOnce(app);
