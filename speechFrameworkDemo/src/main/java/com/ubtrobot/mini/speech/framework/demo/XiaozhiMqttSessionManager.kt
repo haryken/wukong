@@ -64,6 +64,7 @@ class XiaozhiMqttSessionManager(
         const val CHANNELS = 1
         const val FRAME_MS = 60
         const val PCM_GAIN_CONCENTUS = 2f
+        private const val DETECT_GREET_TEXT = "xin chào"
 
         private const val WAIT_PLAYBACK_TIMEOUT_MS = 30_000L
         private const val WAKE_DEBOUNCE_MS = 800L
@@ -299,7 +300,7 @@ class XiaozhiMqttSessionManager(
                         }
                         XiaozhiMcpResponder.awaitInitializeResponded()
                     }
-                    protocol.sendWakeWordDetected("hey mini")
+                    protocol.sendWakeWordDetected(DETECT_GREET_TEXT)
                     delay(80)
                     voiceArmed = true
                     sendListen("hey mini")

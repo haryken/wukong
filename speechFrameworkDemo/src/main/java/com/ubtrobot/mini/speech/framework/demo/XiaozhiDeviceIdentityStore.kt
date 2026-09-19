@@ -11,7 +11,7 @@ import kotlin.random.Random
 
 /**
  * Device-Id = MAC khóa Self-Control.
- * Client-Id = UUID — **random mỗi lần mở session / đổi cấu hình** (tránh server gắn cứng / chặn theo UUID cũ).
+ * Client-Id = UUID ổn định giữa các lần boot; chỉ random khi Apply đổi cấu hình.
  */
 object XiaozhiDeviceIdentityStore {
     private const val TAG = "XiaozhiDeviceId"
@@ -39,7 +39,7 @@ object XiaozhiDeviceIdentityStore {
 
     /**
      * Random Client-Id mới, giữ Device-Id (MAC) hiện tại.
-     * Gọi khi tạo session boot hoặc ApplyDeviceIdentity.
+     * Chỉ gọi khi Self-Control Apply đổi cấu hình — không gọi mỗi boot.
      */
     fun rotateClientId(context: Context): Identity {
         SelfControlStore.init(context)

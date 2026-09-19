@@ -62,6 +62,11 @@ class XiaozhiWebSocketSessionManager(
         const val CHANNELS = 1
         const val FRAME_MS = 60
         const val PCM_GAIN_CONCENTUS = 2f
+        /** Giống Otto/ESP32: listen state=detect + text → server khơi chào / mở hội thoại. */
+        private const val DETECT_GREET_TEXT = "xin chào"
+        /** Im lặng quá lâu → gửi detect này (không đóng WS). */
+        private const val DETECT_NUDGE_TEXT = "hãy khơi gợi"
+        private const val IDLE_NUDGE_MS = 30_000L
 
         @JvmStatic
         fun noteRobotSkillPcmSuppress(durationMs: Long, reason: String) {
@@ -179,6 +184,72 @@ class XiaozhiWebSocketSessionManager(
         heyMiniJustTriggered = false
         Log.i(TAG, "[Greeting] $reason – mở gửi PCM + hey mini KWS (sau ting)")
         mainHandler.post { onFirstGreetingMicReady?.invoke() }
+        armIdleNudgeWatch("sau chào/ting")
+    }
+
+    /** User nói (STT thật) → reset đếm im lặng 30s. */
+    private fun noteUserSpoke(sttText: String) {
+        val t = sttText.trim()
+        if (t.isEmpty()) return
+        if (t.equals(DETECT_GREET_TEXT, ignoreCase = true)
+            || t.equals(DETECT_NUDGE_TEXT, ignoreCase = true)
+            || t.equals("hey mini", ignoreCase = true)
+        ) {
+            return
+        }
+        if (isLikelySessionEndStt(t)) {
+            cancelIdleNudgeWatch("goodbye STT")
+            return
+        }
+        lastUserSpokeMs = System.currentTimeMillis()
+        armIdleNudgeWatch("user STT")
+    }
+
+    private fun cancelIdleNudgeWatch(reason: String) {
+        idleNudgeJob?.cancel()
+        idleNudgeJob = null
+        Log.d(TAG, "[Idle] hủy đếm 30s – $reason")
+    }
+
+    /**
+     * Đếm 30s im lặng khi WS mở + mic sẵn → gửi detect khơi gợi, **không đóng WebSocket**.
+     */
+    private fun armIdleNudgeWatch(reason: String) {
+        idleNudgeJob?.cancel()
+        if (!protocol.isAudioChannelOpened() || sessionClosedAwaitWake) {
+            idleNudgeJob = null
+            return
+        }
+        if (isTtsPlaying || suppressServerPcmUntilFirstGreetingDone) {
+            idleNudgeJob = null
+            return
+        }
+        val gen = ++idleNudgeGeneration
+        idleNudgeJob = scope.launch {
+            Log.d(TAG, "[Idle] đếm ${IDLE_NUDGE_MS / 1000}s im lặng ($reason)")
+            delay(IDLE_NUDGE_MS)
+            if (gen != idleNudgeGeneration) return@launch
+            if (!protocol.isAudioChannelOpened() || sessionClosedAwaitWake) return@launch
+            if (isTtsPlaying || suppressServerPcmUntilFirstGreetingDone) return@launch
+            val sinceSpeak = System.currentTimeMillis() - lastUserSpokeMs
+            if (lastUserSpokeMs != 0L && sinceSpeak < IDLE_NUDGE_MS - 500L) {
+                armIdleNudgeWatch("user vừa nói")
+                return@launch
+            }
+            Log.i(TAG, "[Idle] ${IDLE_NUDGE_MS / 1000}s không nói → detect \"$DETECT_NUDGE_TEXT\" (giữ WS mở)")
+            suppressServerPcmUntilFirstGreetingDone = true
+            heyMiniJustTriggered = true
+            try {
+                protocol.sendWakeWordDetected(DETECT_NUDGE_TEXT)
+                delay(80L)
+                sendListenStartOnly("idle-nudge", ListeningMode.AUTO_STOP, forceRefresh = true)
+            } catch (e: Exception) {
+                Log.w(TAG, "[Idle] gửi khơi gợi lỗi: ${e.message}")
+                suppressServerPcmUntilFirstGreetingDone = false
+                heyMiniJustTriggered = false
+                armIdleNudgeWatch("nudge fail retry")
+            }
+        }
     }
 
     /** Sau listen + ting (chỉ sau dance/skill): đợi mic/AEC ổn rồi mới gửi Opus. */
@@ -198,8 +269,11 @@ class XiaozhiWebSocketSessionManager(
     ) {
         mainHandler.post { onTtsStoppedRestartMic?.invoke() }
         delay(if (wasGreeting || afterRobotSkill) PRE_TING_MIC_WARMUP_MS else 150L)
+        // Mở mic lại sau TTS: ting + mắt cười.
+        mainHandler.post { ActivationEyeDisplay.showWakeupSmileEyes() }
         try {
             WakeupAudioPlayer.get(context).play()
+            Log.i(TAG, "mic-ready ting + smile ($reason)")
         } catch (e: Exception) {
             Log.w(TAG, "Play mic-ready sound failed", e)
         }
@@ -219,6 +293,7 @@ class XiaozhiWebSocketSessionManager(
                 "[STT flow] sau ting: listen mới + PCM sau ${LISTEN_COOLDOWN_MS + POST_TING_PCM_DELAY_MS}ms"
             )
         }
+        armIdleNudgeWatch("mic sẵn sau TTS")
     }
 
     /**
@@ -254,7 +329,7 @@ class XiaozhiWebSocketSessionManager(
                 if (protocol.isAudioChannelOpened()) {
                     Log.i(TAG, "reopenChannelAndListen($reason): WS đã mở – listen")
                     if (isHeyMini) {
-                        protocol.sendWakeWordDetected("hey mini")
+                        protocol.sendWakeWordDetected(DETECT_GREET_TEXT)
                         delay(80)
                     }
                     sendListenStartOnly(reason, ListeningMode.AUTO_STOP, forceRefresh = isHeyMini)
@@ -273,7 +348,7 @@ class XiaozhiWebSocketSessionManager(
                 XiaozhiMcpResponder.awaitInitializeResponded()
                 resetSttActivityOnChannelReset()
                 if (isHeyMini) {
-                    protocol.sendWakeWordDetected("hey mini")
+                    protocol.sendWakeWordDetected(DETECT_GREET_TEXT)
                     delay(80)
                 }
                 sendListenStartOnly(reason, ListeningMode.AUTO_STOP)
@@ -291,23 +366,133 @@ class XiaozhiWebSocketSessionManager(
         }
     }
 
+    @Volatile
+    private var bootNetworkUnreg: (() -> Unit)? = null
+
+    /**
+     * Cold boot: chờ Wi‑Fi/IP rồi mới SSL — tránh treo ~7s "Waiting for server hello" khi chưa có route.
+     * Fail → đăng ký 1 lần retry khi mạng lên (lúc chạm đầu kênh đã sẵn → chào gần tức thời).
+     */
     private suspend fun bootstrapChannelLikeReference() {
         try {
             protocol.start()
-            Log.i(TAG, "[init] WebSocket → openAudioChannel (giống ChatViewModel)")
-            val res = protocol.openAudioChannel()
-            if (!res.success) {
-                Log.e(TAG, "[init] openAudioChannel failed")
+            NetworkReadyGate.awaitReady(context, 45_000L)
+            // Settle ngắn sau khi có IP (DNS/route).
+            delay(200L)
+            var opened = false
+            for (attempt in 1..5) {
+                if (protocol.isAudioChannelOpened()) {
+                    opened = true
+                    break
+                }
+                Log.i(TAG, "[init] WebSocket → openAudioChannel attempt=$attempt/5")
+                val res = try {
+                    protocol.openAudioChannel()
+                } catch (e: Exception) {
+                    Log.w(TAG, "[init] openAudioChannel attempt=$attempt: ${e.message}")
+                    OpenChannelResult(success = false, didOpen = false)
+                }
+                if (res.success) {
+                    // Hello xong nhưng WS cũ đóng muộn từng làm isOpen=false → kiểm tra lại.
+                    delay(80L)
+                    if (protocol.isAudioChannelOpened()) {
+                        opened = true
+                        break
+                    }
+                    Log.w(TAG, "[init] openAudioChannel success nhưng kênh đã mất – thử lại")
+                }
+                Log.w(TAG, "[init] openAudioChannel failed attempt=$attempt")
+                delay(400L * attempt)
+            }
+            if (!opened) {
+                Log.e(TAG, "[init] openAudioChannel failed – schedule retry when network up")
+                scheduleBootNetworkRetry()
                 return
             }
             XiaozhiMcpResponder.awaitInitializeResponded()
             sessionClosedAwaitWake = false
             channelIntentionallyStale = false
-            sendListenStartOnly("init", ListeningMode.AUTO_STOP)
+            var listenOk = sendListenStartOnly("init", ListeningMode.AUTO_STOP, forceRefresh = true)
+            if (!listenOk) {
+                delay(200L)
+                if (!protocol.isAudioChannelOpened()) {
+                    Log.w(TAG, "[init] kênh mất sau hello – mở lại 1 lần")
+                    val again = protocol.openAudioChannel()
+                    if (!again.success || !protocol.isAudioChannelOpened()) {
+                        scheduleBootNetworkRetry()
+                        return
+                    }
+                    XiaozhiMcpResponder.awaitInitializeResponded()
+                }
+                listenOk = sendListenStartOnly("init", ListeningMode.AUTO_STOP, forceRefresh = true)
+            }
+            if (!listenOk) {
+                Log.e(TAG, "[init] Listen start thất bại – không báo ready (server sẽ không tự chào)")
+                scheduleBootNetworkRetry()
+                return
+            }
+            // Server đôi khi không chào chỉ với listen start — gửi detect như hey mini để luôn tự chào lúc boot.
+            suppressServerPcmUntilFirstGreetingDone = true
+            heyMiniJustTriggered = true
+            try {
+                protocol.sendWakeWordDetected(DETECT_GREET_TEXT)
+                delay(80L)
+                sendListenStartOnly("init-greet", ListeningMode.AUTO_STOP, forceRefresh = true)
+                Log.i(TAG, "[init] đã gửi detect \"$DETECT_GREET_TEXT\" → server tự chào")
+            } catch (e: Exception) {
+                Log.w(TAG, "[init] boot greet detect: ${e.message}")
+                suppressServerPcmUntilFirstGreetingDone = false
+                heyMiniJustTriggered = false
+            }
             onWebSocketSessionReady?.invoke()
             Log.i(TAG, "[init] WebSocket channel OK")
         } catch (e: Exception) {
             Log.e(TAG, "[init] bootstrap: ${e.message}", e)
+            scheduleBootNetworkRetry()
+        }
+    }
+
+    private fun scheduleBootNetworkRetry() {
+        if (protocol.isAudioChannelOpened()) return
+        try {
+            bootNetworkUnreg?.invoke()
+        } catch (_: Exception) {
+        }
+        bootNetworkUnreg = NetworkReadyGate.whenNetworkAvailable(context) {
+            scope.launch {
+                if (protocol.isAudioChannelOpened()) return@launch
+                Log.i(TAG, "[init] network up → retry openAudioChannel")
+                try {
+                    delay(300L)
+                    val res = protocol.openAudioChannel()
+                    if (!res.success) {
+                        Log.w(TAG, "[init] network-retry openAudioChannel failed")
+                        return@launch
+                    }
+                    XiaozhiMcpResponder.awaitInitializeResponded()
+                    sessionClosedAwaitWake = false
+                    channelIntentionallyStale = false
+                    if (!sendListenStartOnly("init-retry", ListeningMode.AUTO_STOP, forceRefresh = true)) {
+                        Log.w(TAG, "[init] network-retry listen failed")
+                        return@launch
+                    }
+                    suppressServerPcmUntilFirstGreetingDone = true
+                    heyMiniJustTriggered = true
+                    try {
+                        protocol.sendWakeWordDetected(DETECT_GREET_TEXT)
+                        delay(80L)
+                        sendListenStartOnly("init-retry-greet", ListeningMode.AUTO_STOP, forceRefresh = true)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[init] network-retry greet: ${e.message}")
+                        suppressServerPcmUntilFirstGreetingDone = false
+                        heyMiniJustTriggered = false
+                    }
+                    onWebSocketSessionReady?.invoke()
+                    Log.i(TAG, "[init] WebSocket channel OK (network retry)")
+                } catch (e: Exception) {
+                    Log.e(TAG, "[init] network-retry: ${e.message}", e)
+                }
+            }
         }
     }
 
@@ -409,7 +594,10 @@ class XiaozhiWebSocketSessionManager(
                             Log.i(TAG, "[STT] Server trả STT: text=\"$text\" – nếu không thấy khi nói = server không trả lời")
                             if (isLikelySessionEndStt(text)) {
                                 sessionClosedAwaitWake = true
+                                cancelIdleNudgeWatch("session end")
                                 Log.i(TAG, "[Session] STT kết thúc hội thoại – sau TTS/WS đóng không tự reopen")
+                            } else {
+                                noteUserSpoke(text)
                             }
                             // Skill robot chỉ qua MCP tools/call — không khớp keyword STT (tránh chạy 2 lần).
                         }
@@ -443,21 +631,26 @@ class XiaozhiWebSocketSessionManager(
                     if (type == "tts") {
                         when (json.optString("state")) {
                             "start" -> {
+                                // Greeting sau hey mini: vẫn set isTtsPlaying (tránh mic kẹt).
+                                if (lastTtsStopClearedAt != 0L) lastTtsStopClearedAt = 0L
+                                if (protocol.isAudioChannelOpened()
+                                    && (!heyMiniJustTriggered || suppressServerPcmUntilFirstGreetingDone)
+                                ) {
+                                    isTtsPlaying = true
+                                    isTtsPlayingSinceMs = System.currentTimeMillis()
+                                }
+                                cancelIdleNudgeWatch("TTS start")
                                 if (heyMiniJustTriggered && suppressServerPcmUntilFirstGreetingDone) {
                                     onTtsStarted?.invoke()
                                     return@collect
                                 }
                                 if (heyMiniJustTriggered) return@collect
-                                if (lastTtsStopClearedAt != 0L) lastTtsStopClearedAt = 0L
                                 if (protocol.isAudioChannelOpened()) {
-                                    isTtsPlaying = true
-                                    isTtsPlayingSinceMs = System.currentTimeMillis()
                                     onTtsStarted?.invoke()
                                 }
                             }
                             "sentence_start" -> {
-                                if (heyMiniJustTriggered && suppressServerPcmUntilFirstGreetingDone) return@collect
-                                if (heyMiniJustTriggered) return@collect
+                                if (heyMiniJustTriggered && !suppressServerPcmUntilFirstGreetingDone) return@collect
                                 if (lastTtsStopClearedAt != 0L && System.currentTimeMillis() - lastTtsStopClearedAt < TTS_STOP_COOLDOWN_MS) {
                                     Log.d(TAG, "Bỏ qua sentence_start trễ (${System.currentTimeMillis() - lastTtsStopClearedAt}ms < ${TTS_STOP_COOLDOWN_MS}ms) – event cũ")
                                     return@collect
@@ -565,6 +758,7 @@ class XiaozhiWebSocketSessionManager(
                             heyMiniJustTriggered = false
                             lastListenSentMs = 0L
                             sendFrameCount = 0L
+                            cancelIdleNudgeWatch("WS closed")
                             Log.i(TAG, "WebSocket closed – chờ hey mini / chạm đầu (không tự mở lại)")
                             scheduleListenWatchdogIfIdle()
                         } else {
@@ -595,6 +789,11 @@ class XiaozhiWebSocketSessionManager(
     /** Thời điểm nhận STT gần nhất (để cảnh báo khi gửi lâu không thấy STT). */
     @Volatile
     private var lastSttReceivedMs = 0L
+    @Volatile
+    private var lastUserSpokeMs = 0L
+    private var idleNudgeJob: Job? = null
+    @Volatile
+    private var idleNudgeGeneration = 0
     @Volatile
     private var lastNoSttWarnMs = 0L
     /** Chỉ refresh listen khi không có STT lâu (tránh spam server 30s/lần). */
@@ -710,7 +909,7 @@ class XiaozhiWebSocketSessionManager(
                 } catch (e: Exception) {
                     Log.w(TAG, "player.interruptPlayback", e)
                 }
-                protocol.sendWakeWordDetected("hey mini")
+                protocol.sendWakeWordDetected(DETECT_GREET_TEXT)
                 delay(80)
                 sendListenStartOnly("hey mini", ListeningMode.AUTO_STOP, forceRefresh = true)
                 mainHandler.post { onTtsStoppedRestartMic?.invoke() }
@@ -893,6 +1092,12 @@ class XiaozhiWebSocketSessionManager(
     }
 
     override fun dispose() {
+        try {
+            bootNetworkUnreg?.invoke()
+        } catch (_: Exception) {
+        }
+        bootNetworkUnreg = null
+        cancelIdleNudgeWatch("dispose")
 
         try { player.shutdown() } catch (e: Exception) {}
         try { encoder.release() } catch (e: Exception) {}

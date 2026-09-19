@@ -74,6 +74,10 @@ public class ActivationEyeDisplay {
   private static final String[] LISTEN_READY_SMILE = {
       "wakeup", "w_basic_001", "emo_001", "normal"
   };
+  /** Tránh spam doExpress (Online+wake+TTS+ting) → ActivateException / mắt giật. */
+  private static final AtomicBoolean smileRunning = new AtomicBoolean(false);
+  private static volatile long lastSmileAtMs = 0L;
+  private static final long SMILE_DEBOUNCE_MS = 2500L;
 
   /** IP 1 dòng — chữ rất nhỏ để không xuống dòng / tràn. */
   private static final float IP_MAX_TEXT_SIZE = 11f;
@@ -142,48 +146,63 @@ public class ActivationEyeDisplay {
 
   /**
    * Mắt cười như vừa đánh thức — gọi cùng tiếng ting khi mở mic lại sau TTS.
+   * Debounce: nhiều chỗ gọi liên tiếp chỉ chạy 1 lần.
    */
   public static void showWakeupSmileEyes() {
     if (qrShowing.get()) {
       Log.i(TAG, "showWakeupSmileEyes skipped – QR đang hiện");
       return;
     }
+    long now = System.currentTimeMillis();
+    if (now - lastSmileAtMs < SMILE_DEBOUNCE_MS) {
+      Log.d(TAG, "showWakeupSmileEyes debounced");
+      return;
+    }
+    if (!smileRunning.compareAndSet(false, true)) {
+      Log.d(TAG, "showWakeupSmileEyes skip – đang chạy");
+      return;
+    }
+    lastSmileAtMs = now;
     new Thread(() -> {
-      if (qrShowing.get()) {
-        Log.i(TAG, "showWakeupSmileEyes aborted – QR đang hiện");
-        return;
-      }
-      ExpressApi api;
       try {
-        api = ExpressApi.get();
-      } catch (Throwable t) {
-        Log.w(TAG, "ExpressApi: " + t.getMessage());
-        return;
-      }
-      for (String name : LISTEN_READY_SMILE) {
-        try {
-          CountDownLatch done = new CountDownLatch(1);
-          api.doExpress(name, 1, Priority.HIGH, new AnimationListener() {
-            @Override public void onAnimationStart() {
-            }
-
-            @Override public void onAnimationEnd(int i) {
-              done.countDown();
-            }
-
-            @Override public void onAnimationRepeat(int loopNumber) {
-            }
-          });
-          if (done.await(1500, TimeUnit.MILLISECONDS)) {
-            Log.i(TAG, "Listen-ready smile OK express=" + name);
-            return;
-          }
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
+        if (qrShowing.get()) {
+          Log.i(TAG, "showWakeupSmileEyes aborted – QR đang hiện");
           return;
-        } catch (Throwable t) {
-          Log.d(TAG, "Listen-ready smile miss " + name + ": " + t.getMessage());
         }
+        ExpressApi api;
+        try {
+          api = ExpressApi.get();
+        } catch (Throwable t) {
+          Log.w(TAG, "ExpressApi: " + t.getMessage());
+          return;
+        }
+        for (String name : LISTEN_READY_SMILE) {
+          try {
+            CountDownLatch done = new CountDownLatch(1);
+            api.doExpress(name, 1, Priority.HIGH, new AnimationListener() {
+              @Override public void onAnimationStart() {
+              }
+
+              @Override public void onAnimationEnd(int i) {
+                done.countDown();
+              }
+
+              @Override public void onAnimationRepeat(int loopNumber) {
+              }
+            });
+            if (done.await(1500, TimeUnit.MILLISECONDS)) {
+              Log.i(TAG, "Listen-ready smile OK express=" + name);
+              return;
+            }
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+          } catch (Throwable t) {
+            Log.d(TAG, "Listen-ready smile miss " + name + ": " + t.getMessage());
+          }
+        }
+      } finally {
+        smileRunning.set(false);
       }
     }, "ListenReadySmile").start();
   }

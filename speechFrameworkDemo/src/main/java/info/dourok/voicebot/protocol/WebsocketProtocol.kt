@@ -180,7 +180,11 @@ class WebsocketProtocol(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                // Hủy trạng thái ngay khi server bắt đầu đóng – tránh reuse session với isAudioChannelOpened() stale true.
+                // Chỉ hủy nếu đúng WS hiện tại — WS cũ (timeout/retry) đóng muộn không được phá kênh mới.
+                if (websocket !== webSocket) {
+                    Log.d(TAG, "WebSocket closing (stale) ignored: $code: $reason")
+                    return
+                }
                 isOpen = false
                 serverHelloReady = false
                 Log.i(TAG, "WebSocket closing: $code: $reason")
@@ -188,17 +192,24 @@ class WebsocketProtocol(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (websocket !== webSocket) {
+                    Log.d(TAG, "WebSocket closed (stale) ignored: $code: $reason")
+                    return
+                }
                 isOpen = false
                 serverHelloReady = false
                 Log.i(TAG, "WebSocket closed: $code: $reason")
                 scope.launch {
                     audioChannelStateFlow.emit(AudioState.CLOSED)
                 }
-                // Chỉ null nếu đây là WS hiện tại – tránh overwrite WS mới khi reconnect nhanh
-                if (websocket === webSocket) websocket = null
+                websocket = null
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (websocket !== webSocket) {
+                    Log.d(TAG, "WebSocket failure (stale) ignored: ${t.message}")
+                    return
+                }
                 isOpen = false
                 serverHelloReady = false
                 t.printStackTrace()
@@ -207,7 +218,7 @@ class WebsocketProtocol(
                     networkErrorFlow.emit("Server not found")
                     audioChannelStateFlow.emit(AudioState.CLOSED)
                 }
-                if (websocket === webSocket) websocket = null
+                websocket = null
             }
         })
 
