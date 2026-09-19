@@ -32,9 +32,8 @@ import java.nio.ByteOrder
 import java.util.Locale
 
 /**
- * Xiaozhi voice session qua WebSocket — **luồng nói = commit 2b23f8d 100%**.
- * Chỉ thêm [isAudioChannelOpened] / [switchDeviceIdentity] / [recoverTalkAfterShowConfig]
- * cho Self-Control khi lưu cấu hình (đổi MAC + Client-Id).
+ * Xiaozhi voice session qua WebSocket.
+ * @param audioSessionId Session dùng chung với AudioRecord (AEC).
  */
 class XiaozhiWebSocketSessionManager(
     private val context: Context,
@@ -66,13 +65,7 @@ class XiaozhiWebSocketSessionManager(
 
         @JvmStatic
         fun noteRobotSkillPcmSuppress(durationMs: Long, reason: String) {
-            if (durationMs <= 0) return
-            val until = System.currentTimeMillis() + durationMs
-            if (until > suppressServerPcmForSkillUntilMs) {
-                suppressServerPcmForSkillUntilMs = until
-                refreshSessionAfterNextTtsStop = true
-                Log.i(TAG, "[Skill] chặn PCM server ~${durationMs / 1000}s ($reason)")
-            }
+            XiaozhiSessionManager.noteRobotSkillPcmSuppress(durationMs, reason)
         }
         /** Delay rất ngắn sau TTS stop rồi chờ phát xong – giao tiếp liên tục, mở mic sớm. */
         private const val MIC_DELAY_MS_AFTER_TTS = 60L
@@ -859,7 +852,6 @@ class XiaozhiWebSocketSessionManager(
                 for (attempt in 1..4) {
                     delay(if (attempt == 1) 1_200L else 2_000L)
                     if (protocol.isAudioChannelOpened()) return@launch
-                    Log.w(TAG, "recoverTalkAfterShowConfig: reopen attempt=$attempt")
                     sessionClosedAwaitWake = false
                     channelIntentionallyStale = false
                     if (reopenChannelAndListen("sau show_config")) return@launch
@@ -870,7 +862,7 @@ class XiaozhiWebSocketSessionManager(
         }
     }
 
-    /** Chỉ gọi khi Self-Control lưu đổi MAC — không thuộc luồng nói thường. */
+    /** Chỉ khi Self-Control lưu đổi MAC — không đụng luồng nói thường. */
     override fun switchDeviceIdentity(deviceId: String, clientId: String): Boolean {
         return try {
             runBlocking {
@@ -878,10 +870,7 @@ class XiaozhiWebSocketSessionManager(
                 isTtsPlaying = false
                 isTtsPlayingSinceMs = 0L
                 ttsRecoveryGeneration++
-                try {
-                    protocol.closeAudioChannel()
-                } catch (_: Exception) {
-                }
+                try { protocol.closeAudioChannel() } catch (_: Exception) {}
                 protocol.updateIdentity(deviceId, clientId)
                 MiniRobotActionInvoker.setXiaozhiWireIdentities(deviceId, clientId)
                 XiaozhiMcpResponder.resetInitializeHandshake()
@@ -894,8 +883,6 @@ class XiaozhiWebSocketSessionManager(
                 if (!ok) {
                     suppressServerPcmUntilFirstGreetingDone = false
                     heyMiniJustTriggered = false
-                } else {
-                    Log.i(TAG, "switchDeviceIdentity OK Device-Id=$deviceId")
                 }
                 ok
             }

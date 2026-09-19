@@ -53,7 +53,7 @@ class WebsocketProtocol(
         sessionId = "your_session_id"
     }
 
-    /** Self-Control Apply: đổi Device-Id / Client-Id trước khi mở WS mới. */
+    /** Self-Control Apply only. */
     fun updateIdentity(deviceId: String, clientId: String) {
         deviceInfo = info.dourok.voicebot.data.model.DummyDataGenerator.generate(deviceId, clientId)
         Log.i(TAG, "updateIdentity Device-Id=$deviceId Client-Id=$clientId")

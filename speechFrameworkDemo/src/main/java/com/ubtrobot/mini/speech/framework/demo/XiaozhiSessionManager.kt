@@ -28,8 +28,13 @@ class XiaozhiSessionManager private constructor(
 
         @JvmStatic
         fun noteRobotSkillPcmSuppress(durationMs: Long, reason: String) {
-            // Flag phải nằm trên companion WS (pcmBlockReason đọc tại đây).
-            XiaozhiWebSocketSessionManager.noteRobotSkillPcmSuppress(durationMs, reason)
+            if (durationMs <= 0) return
+            val until = System.currentTimeMillis() + durationMs
+            if (until > suppressServerPcmForSkillUntilMs) {
+                suppressServerPcmForSkillUntilMs = until
+                refreshSessionAfterNextTtsStop = true
+                Log.i(TAG, "[Skill] chặn PCM server ~${durationMs / 1000}s ($reason)")
+            }
         }
 
         fun create(

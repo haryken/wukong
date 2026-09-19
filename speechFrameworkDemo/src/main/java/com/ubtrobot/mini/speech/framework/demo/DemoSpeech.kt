@@ -26,6 +26,7 @@ import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlHttpServer
 import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlMqttIdentityPatch
 import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlPresets
 import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlStore
+import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicInteger
 import com.ubtrobot.mini.speech.framework.skill.SkillManager
 import com.ubtrobot.mini.speech.framework.utils.MicApiHelper
@@ -96,11 +97,8 @@ object DemoSpeech : SpeechModuleFactory() {
     /** Hey mini / chạm đầu vừa xảy ra — dùng khi OTA swap transport hủy wake giữa chừng. */
     @Volatile
     private var lastWakeAtMs: Long = 0L
-
     private val identityApplyGen = AtomicInteger(0)
     @Volatile private var lastAppliedDeviceId: String? = null
-    @Volatile private var lastLocalShowConfigMs = 0L
-    @Volatile private var lastLocalShiftUnitMs = 0L
 
     private var mRecognizerListener: RecognizerListener? = null
     private var mSynthesizerListener: SynthesizerListener? = null
@@ -150,12 +148,6 @@ object DemoSpeech : SpeechModuleFactory() {
         SelfControlStore.init(appContext)
         SelfControlHttpServer.setOnIdentityChanged { applyDeviceIdentityFromSelfControl() }
         SelfControlHttpServer.start(appContext)
-        LogUtils.i(TAG, "Self-Control HTTP ${SelfControlHttpServer.configUrl()}")
-        try {
-            ActivationEyeDisplay.bindAppContext(appContext)
-            ActivationEyeDisplay.warmSelfControlEyeCache(SelfControlHttpServer.configUrl())
-        } catch (_: Exception) {
-        }
         //Load the wake-up sound effect in advance
         WakeupAudioPlayer.get(appContext)
 
@@ -422,7 +414,6 @@ object DemoSpeech : SpeechModuleFactory() {
         xiaozhiSessionRef?.getTransportLabel() ?: "WebSocket"
 
     private fun createXiaozhiSessionManager(audioSessionId: Int): XiaozhiSessionManager? {
-        // Mỗi lần mở session: random Client-Id mới (Device-Id = MAC khóa).
         val identity = XiaozhiDeviceIdentityStore.rotateClientId(appContext)
         val deviceId = identity.deviceId
         val clientId = identity.clientId
@@ -512,7 +503,11 @@ object DemoSpeech : SpeechModuleFactory() {
         )
     }
 
-        /**
+    /**
+     * Đổi transport từ UI (sau khi OTA đã có mqtt config nếu chọn MQTT).
+     * Gọi từ MainActivity — swap session trên recognizer đang chạy.
+     */
+    /**
      * ApplyDeviceIdentity (Otto / ESP32 fast path): đóng session → Device-Id mới → mở WS/MQTT → auto chào.
      * Không CheckVersion / không OTA. Cùng MAC + kênh đang mở → bỏ qua (tránh cắt TTS / đơ mạng).
      */
@@ -817,63 +812,6 @@ object DemoSpeech : SpeechModuleFactory() {
         }
     }
 
-    /**
-     * Fallback khi server không gọi MCP: STT chứa "mở cấu hình / hiện QR" → vẫn vẽ mắt.
-     * @return true nếu đã xử lý local (caller có thể bỏ qua).
-     */
-    @JvmStatic
-    fun tryLocalShowConfigFromStt(sttText: String?): Boolean {
-        val t = sttText?.lowercase()?.trim().orEmpty()
-        if (t.isEmpty()) return false
-        val hit = listOf(
-            "mở trang cấu hình", "mo trang cau hinh",
-            "mở cấu hình", "mo cau hinh",
-            "hiện qr", "hien qr", "mở qr", "mo qr",
-            "hiện mã qr", "show config", "self control",
-            "trang cấu hình", "cài đặt robot"
-        ).any { t.contains(it) }
-        if (!hit) return false
-        val now = System.currentTimeMillis()
-        if (now - lastLocalShowConfigMs < 8_000L) {
-            LogUtils.i(TAG, "STT local show_config debounce")
-            return true
-        }
-        lastLocalShowConfigMs = now
-        LogUtils.i(TAG, "STT local show_config: \"$sttText\"")
-        selfControlShowConfigPage()
-        return true
-    }
-
-    /**
-     * Fallback STT: "unit tiếp theo / bài trước" → shift unit local nếu server không gọi MCP.
-     */
-    @JvmStatic
-    fun tryLocalShiftUnitFromStt(sttText: String?): Boolean {
-        val t = sttText?.lowercase()?.trim().orEmpty()
-        if (t.isEmpty()) return false
-        val nextHit = listOf(
-            "unit tiếp theo", "bài tiếp theo", "unit tiep theo", "bai tiep theo",
-            "next unit", "sang unit sau", "unit kế tiếp", "bài kế tiếp",
-            "nextunit", "chuyển unit tiếp", "chuyen unit tiep"
-        ).any { t.contains(it) }
-        val prevHit = listOf(
-            "unit trước", "bài trước", "unit truoc", "bai truoc",
-            "previous unit", "prev unit", "unit vừa rồi", "lùi unit",
-            "previousunit", "prevunit", "chuyển unit trước", "chuyen unit truoc"
-        ).any { t.contains(it) }
-        if (!nextHit && !prevHit) return false
-        val now = System.currentTimeMillis()
-        if (now - lastLocalShiftUnitMs < 4_000L) {
-            LogUtils.i(TAG, "STT local shift_unit debounce")
-            return true
-        }
-        lastLocalShiftUnitMs = now
-        val dir = if (nextHit) "next" else "prev"
-        val r = selfControlShiftUnit(dir)
-        LogUtils.i(TAG, "STT local shift_unit ($dir): $r")
-        return true
-    }
-
 
     @JvmStatic
     fun applyTransportFromUi(@Suppress("UNUSED_PARAMETER") context: Context): String {
@@ -1025,33 +963,13 @@ object DemoSpeech : SpeechModuleFactory() {
      */
     private fun setupHeadTouchTrigger(hostService: MasterSystemService, service: MasterSystemService) {
         try {
-            HeadTouchEventHelper.subscribe(object : HeadTouchEventHelper.OnHeadTapListener {
-                override fun onHeadTapDownInterrupt() {
-                    if (ActivationEyeDisplay.isQrShowing()) return
-                    try {
-                        xiaozhiSessionRef?.forceStopPlaybackForHeyMini()
-                            ?: (recognizer as? DemoRecognizer)?.forceStopForHeyMini()
-                    } catch (e: Exception) {
-                        LogUtils.w(TAG, "head interrupt: ${e.message}")
-                    }
+            HeadTouchEventHelper.subscribe {
+                ThreadPool.runOnNonUIThread {
+                    // Chạm đầu = nút wake (ESP32): luôn full WS mới, không phụ thuộc KWS/keyword Sherpa.
+                    handleManualWake(hostService, service, fromHeadTouch = true)
                 }
-                override fun onHeadSingleTap(event: com.ubtrobot.mini.sysevent.event.base.KeyEvent?) {
-                    // Giống 2b23f8d: chỉ handleManualWake (ting trong handleWakeup).
-                    ThreadPool.runOnNonUIThread {
-                        handleManualWake(hostService, service, fromHeadTouch = true)
-                    }
-                }
-                override fun onHeadDoubleTap(event: com.ubtrobot.mini.sysevent.event.base.KeyEvent?) {
-                    LogUtils.i(TAG, "[Head] double-tap → QR Wi-Fi / Self-Control")
-                    try {
-                        com.ubtrobot.mini.speech.framework.demo.wificonfig.WifiProvisionController
-                            .onHeadDoubleTap(appContext)
-                    } catch (e: Exception) {
-                        LogUtils.w(TAG, "onHeadDoubleTap: ${e.message}", e)
-                    }
-                }
-            })
-            LogUtils.i(TAG, "Head-touch: single=wake(2b23), double=QR")
+            }
+            LogUtils.i(TAG, "Head-touch trigger registered (HeadTouchEventHelper)")
         } catch (e: Exception) {
             LogUtils.w(TAG, "Head-touch subscribe failed: ${e.message}", e)
         }
