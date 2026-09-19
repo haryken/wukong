@@ -221,6 +221,19 @@ object SelfControlHttpServer {
                         scheduleIdentityChanged()
                     }
                 }
+                method == "POST" && path == "/api/dismiss_qr" -> {
+                    val msg = try {
+                        com.ubtrobot.mini.speech.framework.demo.DemoSpeech.selfControlHideConfigPage()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "dismiss_qr: ${e.message}")
+                        "Không tắt được mã QR."
+                    }
+                    val resp = JSONObject().apply {
+                        put("success", true)
+                        put("message", msg)
+                    }
+                    writeResponse(sock.getOutputStream(), 200, "application/json; charset=utf-8", resp.toString())
+                }
                 else -> writeResponse(sock.getOutputStream(), 404, "text/plain", "Not Found")
             }
         } catch (e: Exception) {

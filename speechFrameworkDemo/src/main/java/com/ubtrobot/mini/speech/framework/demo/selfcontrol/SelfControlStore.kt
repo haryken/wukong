@@ -13,6 +13,8 @@ import org.json.JSONObject
 object SelfControlStore {
     private const val TAG = "SelfControlStore"
     private const val PREFS = "xiaozhi_self_control"
+    /** Server tìm/stream nhạc mặc định (kytuoi YouTube API). */
+    const val DEFAULT_MUSIC_SERVER = "https://youtube.kytuoi.com"
 
     @Volatile private var prefs: SharedPreferences? = null
 
@@ -53,6 +55,33 @@ object SelfControlStore {
 
     fun setStudentName(name: String) {
         sp().edit().putString("student_name", name.trim()).apply()
+    }
+
+    /**
+     * Base URL server nhạc (search + stream MP3), không dấu / cuối.
+     * Mặc định: [DEFAULT_MUSIC_SERVER] (youtube.kytuoi.com).
+     */
+    fun getMusicServerUrl(): String {
+        val raw = prefs?.getString("music_server_url", null)?.trim().orEmpty()
+        return normalizeMusicServerUrl(if (raw.isEmpty()) DEFAULT_MUSIC_SERVER else raw)
+    }
+
+    fun setMusicServerUrl(url: String) {
+        val n = normalizeMusicServerUrl(url)
+        sp().edit().putString("music_server_url", n).apply()
+        Log.i(TAG, "music_server_url=$n")
+    }
+
+    fun normalizeMusicServerUrl(url: String): String {
+        var u = url.trim()
+        if (u.isEmpty()) return DEFAULT_MUSIC_SERVER
+        if (!u.startsWith("http://", ignoreCase = true) &&
+            !u.startsWith("https://", ignoreCase = true)
+        ) {
+            u = "https://$u"
+        }
+        while (u.endsWith("/")) u = u.dropLast(1)
+        return u
     }
 
     private fun getVoice(key: String): Int {
@@ -296,6 +325,7 @@ object SelfControlStore {
         return JSONObject().apply {
             put("preset_mac_idx", idx)
             put("student_name", getStudentName())
+            put("music_server_url", getMusicServerUrl())
             put("device_id", resolveDeviceId())
             put("custom_mac", getCustomMac())
             put("ex_voice", getExVoice())
@@ -351,6 +381,9 @@ object SelfControlStore {
 
         if (body.has("student_name")) {
             setStudentName(body.optString("student_name", ""))
+        }
+        if (body.has("music_server_url")) {
+            setMusicServerUrl(body.optString("music_server_url", DEFAULT_MUSIC_SERVER))
         }
 
         var newIdx = oldIdx

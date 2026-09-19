@@ -141,6 +141,15 @@ object XiaozhiMcpResponder {
                             }
                             toolCallResultBody(true, msg)
                         }
+                        nm.equals("self.otto.hide_config_page", ignoreCase = true)
+                            || nm.equals("self.mini.hide_config_page", ignoreCase = true)
+                            || nm.equals("self.otto.dismiss_qr", ignoreCase = true)
+                            || nm.equals("self.mini.dismiss_qr", ignoreCase = true) -> {
+                            val msg = withContext(Dispatchers.IO) {
+                                DemoSpeech.selfControlHideConfigPage()
+                            }
+                            toolCallResultBody(true, msg)
+                        }
                         nm.equals("self.otto.set_course", ignoreCase = true)
                             || nm.equals("self.mini.set_course", ignoreCase = true) -> {
                             val arguments = params?.optJSONObject("arguments")
@@ -171,6 +180,17 @@ object XiaozhiMcpResponder {
                             val jo = org.json.JSONObject(r)
                             val msg = jo.optString("message", r)
                             toolCallResultBody(jo.optBoolean("success", false), msg)
+                        }
+                        nm.equals("self.otto.music.play", ignoreCase = true) -> {
+                            val arguments = params?.optJSONObject("arguments")
+                            val query = arguments?.optString("query", "")?.trim().orEmpty()
+                            val r = OttoMusicPlayer.playFirstSearchResult(query)
+                            val jo = org.json.JSONObject(r)
+                            toolCallResultBody(jo.optBoolean("success", false), r)
+                        }
+                        nm.equals("self.otto.music.stop", ignoreCase = true) -> {
+                            OttoMusicPlayer.stop()
+                            toolCallResultBody(true, "ok")
                         }
                         else -> {
                             MiniRobotActionInvoker.dispatchFromXiaozhiJson(root)
@@ -299,7 +319,7 @@ object XiaozhiMcpResponder {
             put(
                 toolDef(
                     "self.otto.stop",
-                    "Dừng mọi hành động, gồm chế độ khám phá (explore) và motion đang chạy (ActionApi.stopAction)."
+                    "Dừng mọi hành động, gồm chế độ khám phá (explore), nhạc YouTube đang phát, và motion đang chạy (ActionApi.stopAction)."
                 )
             )
             // Self-Control (Otto parity)
@@ -317,8 +337,52 @@ object XiaozhiMcpResponder {
                         "Chỉ nói ngắn: 'Đã mở mã QR.' — tuyệt đối KHÔNG đọc URL, IP, đường dẫn, http, :8080."
                 )
             )
+            put(
+                toolDef(
+                    "self.otto.hide_config_page",
+                    "Tắt / đóng mã QR cấu hình Self-Control trên mắt robot. " +
+                        "Dùng khi nói 'tắt QR', 'tắt mã QR', 'đóng trang cấu hình', 'ẩn QR'. " +
+                        "Chỉ nói ngắn: 'Đã tắt mã QR.' — không đọc URL."
+                )
+            )
             put(toolDefSetCourse())
             put(toolDefShiftUnit())
+            put(toolDefMusicPlay())
+            put(
+                toolDef(
+                    "self.otto.music.stop",
+                    "Dừng phát nhạc YouTube đang chạy trên loa."
+                )
+            )
+        }
+
+    private fun toolDefMusicPlay(): JSONObject =
+        JSONObject().apply {
+            put("name", "self.otto.music.play")
+            put(
+                "description",
+                "Tìm nhạc trên YouTube (server kytuoi), chọn kết quả đầu tiên và phát MP3 qua loa robot. " +
+                    "Dùng khi người dùng muốn nghe một bài (tên bài / ca sĩ). Trả về status=starting khi bắt đầu tìm."
+            )
+            put(
+                "inputSchema",
+                JSONObject().apply {
+                    put("type", "object")
+                    put(
+                        "properties",
+                        JSONObject().apply {
+                            put(
+                                "query",
+                                JSONObject().apply {
+                                    put("type", "string")
+                                    put("description", "Tên bài hát / ca sĩ / từ khóa tìm nhạc")
+                                }
+                            )
+                        }
+                    )
+                    put("required", JSONArray().put("query"))
+                }
+            )
         }
 
     private fun toolDefShiftUnit(): JSONObject =

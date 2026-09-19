@@ -143,6 +143,9 @@ class XiaozhiWebSocketSessionManager(
     /** Server đóng session (Goodbye / 1005) – không tự reopen/ting; chỉ hey mini / chạm đầu. */
     @Volatile
     private var sessionClosedAwaitWake = false
+    /** Otto music-only: đã đóng WS cố ý để tìm/phát nhạc local; wake word vẫn bật. */
+    @Volatile
+    private var musicOnlyMode = false
 
     /** WS đang mở + đã gửi listen + hết cooldown mới gửi Opus (tránh audio trước listen → server không STT). */
     private fun ensureChannelOpen(): Boolean = protocol.isAudioChannelOpened()
@@ -156,6 +159,8 @@ class XiaozhiWebSocketSessionManager(
     }
 
     private fun pcmBlockReason(): String? {
+        // Chỉ chặn khi đang phát nhạc local — không dùng musicOnlyMode/isActive (dễ kẹt → chat chậm).
+        if (OttoMusicPlayer.isPlaying()) return "đang phát nhạc local"
         if (reopenInProgress) return "đang reopen WS"
         if (suppressServerPcmUntilFirstGreetingDone) return "chờ TTS chào + ting"
         val now = System.currentTimeMillis()
@@ -174,7 +179,7 @@ class XiaozhiWebSocketSessionManager(
     override fun isInFirstGreetingPhase(): Boolean = suppressServerPcmUntilFirstGreetingDone
 
     override fun isPlaybackOrGreetingActive(): Boolean =
-        suppressServerPcmUntilFirstGreetingDone || isTtsPlaying
+        suppressServerPcmUntilFirstGreetingDone || isTtsPlaying || OttoMusicPlayer.isPlaying()
 
     override fun isAcceptingServerPcm(): Boolean = canSendPcmNow()
 
@@ -194,6 +199,8 @@ class XiaozhiWebSocketSessionManager(
         if (t.equals(DETECT_GREET_TEXT, ignoreCase = true)
             || t.equals(DETECT_NUDGE_TEXT, ignoreCase = true)
             || t.equals("hey mini", ignoreCase = true)
+            || t.equals("nhạc thất bại", ignoreCase = true)
+            || t.equals("phát hết nhạc", ignoreCase = true)
         ) {
             return
         }
@@ -216,6 +223,10 @@ class XiaozhiWebSocketSessionManager(
      */
     private fun armIdleNudgeWatch(reason: String) {
         idleNudgeJob?.cancel()
+        if (OttoMusicPlayer.isPlaying()) {
+            idleNudgeJob = null
+            return
+        }
         if (!protocol.isAudioChannelOpened() || sessionClosedAwaitWake) {
             idleNudgeJob = null
             return
@@ -231,6 +242,7 @@ class XiaozhiWebSocketSessionManager(
             if (gen != idleNudgeGeneration) return@launch
             if (!protocol.isAudioChannelOpened() || sessionClosedAwaitWake) return@launch
             if (isTtsPlaying || suppressServerPcmUntilFirstGreetingDone) return@launch
+            if (OttoMusicPlayer.isPlaying()) return@launch
             val sinceSpeak = System.currentTimeMillis() - lastUserSpokeMs
             if (lastUserSpokeMs != 0L && sinceSpeak < IDLE_NUDGE_MS - 500L) {
                 armIdleNudgeWatch("user vừa nói")
@@ -650,6 +662,12 @@ class XiaozhiWebSocketSessionManager(
                                 }
                             }
                             "sentence_start" -> {
+                                val ttsText = json.optString("text", "")
+                                if (ttsText.contains("self.otto.music.play", ignoreCase = true)) {
+                                    // Không hiện chữ TIM NHAC trên mắt — giữ WS đến MCP/stream.
+                                    Log.i(TAG, "TTS chứa self.otto.music.play → giữ WS đến MCP/stream")
+                                    return@collect
+                                }
                                 if (heyMiniJustTriggered && !suppressServerPcmUntilFirstGreetingDone) return@collect
                                 if (lastTtsStopClearedAt != 0L && System.currentTimeMillis() - lastTtsStopClearedAt < TTS_STOP_COOLDOWN_MS) {
                                     Log.d(TAG, "Bỏ qua sentence_start trễ (${System.currentTimeMillis() - lastTtsStopClearedAt}ms < ${TTS_STOP_COOLDOWN_MS}ms) – event cũ")
@@ -692,6 +710,18 @@ class XiaozhiWebSocketSessionManager(
                                         finishFirstGreetingPhase("TTS recovery hủy")
                                         mainHandler.post { onTtsStoppedRestartMic?.invoke() }
                                         return@ttsRecovery
+                                    }
+                                    if (OttoMusicPlayer.isPlaying()) {
+                                        Log.i(TAG, "TTS stop lúc đang phát nhạc local – không reopen/listen")
+                                        isTtsPlaying = false
+                                        isTtsPlayingSinceMs = 0L
+                                        lastTtsStopClearedAt = System.currentTimeMillis()
+                                        return@ttsRecovery
+                                    }
+                                    // Flag music-only kẹt (search fail…) — clear để luồng chat cũ chạy lại.
+                                    if (musicOnlyMode && !OttoMusicPlayer.isPlaying()) {
+                                        Log.w(TAG, "musicOnlyMode kẹt nhưng không phát → exit, tiếp tục listen/ting")
+                                        musicOnlyMode = false
                                     }
                                     val wasGreeting = suppressServerPcmUntilFirstGreetingDone
                                     if (longTts || afterRobotSkill) {
@@ -752,7 +782,13 @@ class XiaozhiWebSocketSessionManager(
                         isTtsPlayingSinceMs = 0L
                         lastTtsStopClearedAt = 0L
                         ttsRecoveryGeneration++
-                        if (!reopenInProgress) {
+                        if (OttoMusicPlayer.isPlaying() || musicOnlyMode) {
+                            sessionClosedAwaitWake = true
+                            lastListenSentMs = 0L
+                            sendFrameCount = 0L
+                            cancelIdleNudgeWatch("music-only WS closed")
+                            Log.i(TAG, "WebSocket closed – music playing / music-only (wake word vẫn bật)")
+                        } else if (!reopenInProgress) {
                             sessionClosedAwaitWake = true
                             suppressServerPcmUntilFirstGreetingDone = false
                             heyMiniJustTriggered = false
@@ -867,13 +903,131 @@ class XiaozhiWebSocketSessionManager(
         isTtsPlaying = false
         isTtsPlayingSinceMs = 0L
         heyMiniJustTriggered = true
+        musicOnlyMode = false
         Log.i(TAG, "[WakeWord] forceStopPlaybackForHeyMini – interruptPlayback")
+        try {
+            OttoMusicPlayer.stop()
+        } catch (e: Exception) {
+            Log.w(TAG, "forceStopPlaybackForHeyMini OttoMusic stop", e)
+        }
         try {
             player.interruptPlayback()
         } catch (e: Exception) {
             Log.w(TAG, "forceStopPlaybackForHeyMini interruptPlayback", e)
         }
         Log.i(TAG, "[WakeWord] Hey mini ưu tiên: đã dừng phát ngay")
+    }
+
+    /**
+     * Otto EnterMusicOnlyMode: abort TTS + CloseAudioChannel + idle.
+     * Chỉ gọi khi MediaPlayer đã start — không gọi lúc TIM NHAC/search (tránh kẹt chat).
+     */
+    override fun enterMusicOnlyMode() {
+        runBlocking {
+            if (musicOnlyMode) {
+                Log.i(TAG, "Music-only đã vào – bỏ qua")
+                return@runBlocking
+            }
+            musicOnlyMode = true
+            cancelIdleNudgeWatch("enter music-only")
+            isTtsPlaying = false
+            isTtsPlayingSinceMs = 0L
+            ttsRecoveryGeneration++
+            suppressServerPcmUntilFirstGreetingDone = false
+            heyMiniJustTriggered = false
+            Log.i(TAG, "Enter music-only: abort TTS + đóng WS (wake word vẫn bật)")
+            try {
+                player.interruptPlayback()
+            } catch (e: Exception) {
+                Log.w(TAG, "music-only interruptPlayback", e)
+            }
+            if (protocol.isAudioChannelOpened()) {
+                try {
+                    protocol.closeAudioChannel()
+                } catch (e: Exception) {
+                    Log.w(TAG, "music-only closeAudioChannel", e)
+                }
+            }
+            sessionClosedAwaitWake = true
+            channelIntentionallyStale = true
+            lastListenSentMs = 0L
+            sendFrameCount = 0L
+        }
+    }
+
+    override fun exitMusicOnlyMode() {
+        if (!musicOnlyMode) return
+        musicOnlyMode = false
+        Log.i(TAG, "exitMusicOnlyMode – clear flag (không đụng kênh)")
+    }
+
+    /**
+     * Otto NotifyMusic* → WakeWordInvoke: mở lại WS nếu đã đóng, gửi detect tùy chữ
+     * ("nhạc thất bại" / "phát hết nhạc") — không dùng "xin chào".
+     */
+    override fun sendSyntheticWakeDetect(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        scope.launch {
+            try {
+                musicOnlyMode = false
+                isTtsPlaying = false
+                isTtsPlayingSinceMs = 0L
+                suppressServerPcmUntilFirstGreetingDone = true
+                heyMiniJustTriggered = true
+                Log.i(TAG, "[SyntheticDetect] WakeWordInvoke \"$t\" (mở lại kênh nếu cần)")
+                try {
+                    player.interruptPlayback()
+                } catch (e: Exception) {
+                    Log.w(TAG, "SyntheticDetect interruptPlayback", e)
+                }
+                var opened = protocol.isAudioChannelOpened()
+                if (!opened) {
+                    for (attempt in 1..4) {
+                        sessionClosedAwaitWake = false
+                        channelIntentionallyStale = false
+                        reopenInProgress = true
+                        try {
+                            Log.i(TAG, "[SyntheticDetect] openAudioChannel attempt=$attempt/4")
+                            val res = protocol.openAudioChannel()
+                            if (res.success && protocol.isAudioChannelOpened()) {
+                                XiaozhiMcpResponder.awaitInitializeResponded()
+                                resetSttActivityOnChannelReset()
+                                opened = true
+                                break
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[SyntheticDetect] open attempt $attempt: ${e.message}")
+                        } finally {
+                            reopenInProgress = false
+                        }
+                        delay(1500L * attempt)
+                    }
+                }
+                if (!opened) {
+                    Log.e(TAG, "[SyntheticDetect] không mở được WS cho \"$t\" – chờ hey mini / chạm đầu")
+                    sessionClosedAwaitWake = true
+                    channelIntentionallyStale = true
+                    heyMiniJustTriggered = false
+                    suppressServerPcmUntilFirstGreetingDone = false
+                    mainHandler.post { onTtsStoppedRestartMic?.invoke() }
+                    return@launch
+                }
+                sessionClosedAwaitWake = false
+                channelIntentionallyStale = false
+                protocol.sendWakeWordDetected(t)
+                delay(80)
+                sendListenStartOnly("synthetic:$t", ListeningMode.AUTO_STOP, forceRefresh = true)
+                onWebSocketSessionReady?.invoke()
+                mainHandler.post { onTtsStoppedRestartMic?.invoke() }
+            } catch (e: Exception) {
+                Log.e(TAG, "[SyntheticDetect] $t: ${e.message}", e)
+                sessionClosedAwaitWake = true
+                channelIntentionallyStale = true
+                heyMiniJustTriggered = false
+                suppressServerPcmUntilFirstGreetingDone = false
+            }
+        }
     }
 
     /**

@@ -24,6 +24,8 @@
         .btn-save { background: #28a745; color: #fff; }
         .btn-save:hover { background: #218838; }
         .btn-save:disabled { background: #ccc; cursor: not-allowed; }
+        .btn-dismiss-qr { background: #e67e22; color: #fff; }
+        .btn-dismiss-qr:hover { background: #d35400; }
         .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: #fff; padding: 12px 24px; border-radius: 8px; opacity: 0; transition: opacity 0.3s; z-index: 999; }
         .toast.show { opacity: 1; }
         .status { text-align: center; font-size: 0.9em; color: #888; margin-top: 8px; }
@@ -33,11 +35,33 @@
         .mac-hint { color: #666; font-size: 0.85em; margin-top: 8px; line-height: 1.4; }
         .device-id { font-family: monospace; background: #eef6ff; padding: 8px 10px; border-radius: 6px; margin-top: 8px; word-break: break-all; }
         .active-lesson { font-family: inherit; background: #e8f8ef; border: 1px solid #28a745; color: #1e7e34; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; line-height: 1.4; font-weight: bold; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+        .tab-btn { flex: 1; padding: 12px 8px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; font-weight: bold; color: #555; cursor: pointer; }
+        .tab-btn.active { background: #3498db; color: #fff; border-color: #3498db; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .settings-block { background: #fff; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow: hidden; border: 1px solid #e9ecef; }
+        .settings-block-head { padding: 14px 16px; font-weight: bold; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; }
+        .settings-block-head:hover { background: #f8fafc; }
+        .settings-block.open .settings-block-head { background: #eaf4fc; border-bottom: 1px solid #d6eaf8; }
+        .settings-block-body { display: none; padding: 14px 16px 16px; }
+        .settings-block.open .settings-block-body { display: block; }
+        .settings-chevron { color: #888; font-size: 0.9em; }
+        .settings-hint { color: #666; font-size: 0.85em; margin: 8px 0 12px; line-height: 1.4; }
+        .btn-settings-save { background: #3498db; color: #fff; margin-top: 8px; }
+        .btn-settings-save:hover { background: #2980b9; }
     </style>
 </head>
 <body>
     <h1>🤖 Mini Self Control</h1>
     <div id="toast" class="toast"></div>
+
+    <div class="tabs">
+        <button type="button" class="tab-btn active" id="tab_btn_student" onclick="switchTab('student')">📚 Học viên</button>
+        <button type="button" class="tab-btn" id="tab_btn_robot" onclick="switchTab('robot')">⚙️ Cài đặt robot</button>
+    </div>
+
+    <div class="tab-panel active" id="tab_student">
     <div class="active-lesson" id="active_lesson">Đang học: …</div>
 
     <!-- Tên học viên -->
@@ -96,12 +120,81 @@
         <div id="unit_list"></div>
     </div>
 
-    <!-- Nút lưu -->
+    <!-- Nút lưu (tab học viên) -->
+    <button class="btn btn-dismiss-qr" id="btn_dismiss_qr" onclick="dismissQr()">📴 Tắt mã QR trên mắt</button>
     <button class="btn btn-save" id="btn_save" onclick="saveConfig()">💾 Lưu cấu hình</button>
     <div class="status" id="status"></div>
+    </div><!-- /tab_student -->
+
+    <div class="tab-panel" id="tab_robot">
+        <p class="settings-hint">Chọn một khối bên dưới để mở phần cài đặt tương ứng.</p>
+
+        <div class="settings-block" id="block_music_server">
+            <div class="settings-block-head" onclick="toggleSettingsBlock('block_music_server')">
+                <span>🎵 Server nhạc</span>
+                <span class="settings-chevron">▼</span>
+            </div>
+            <div class="settings-block-body">
+                <p class="settings-hint">
+                    Robot tìm bài và stream MP3 từ server này (API kiểu kytuoi:
+                    <code>/api/search</code>, <code>/api/stream/mp3</code>).
+                    Mặc định: <code>https://youtube.kytuoi.com</code>
+                </p>
+                <label for="music_server_url">URL server nhạc</label>
+                <input type="text" id="music_server_url" placeholder="https://youtube.kytuoi.com" autocomplete="off" spellcheck="false">
+                <button type="button" class="btn btn-settings-save" id="btn_save_music" onclick="saveMusicServer()">💾 Lưu server nhạc</button>
+                <button type="button" class="btn btn-dismiss-qr" style="margin-top:8px" onclick="resetMusicServer()">↺ Về mặc định (kytuoi)</button>
+            </div>
+        </div>
+    </div><!-- /tab_robot -->
 
     <script>
         const MOCK_UNITS = ['Unit 1', 'Unit 2', 'Unit 3', 'Unit 4', 'Unit 5', 'Unit 6'];
+        const DEFAULT_MUSIC_SERVER = 'https://youtube.kytuoi.com';
+
+        function switchTab(name) {
+            document.getElementById('tab_student').classList.toggle('active', name === 'student');
+            document.getElementById('tab_robot').classList.toggle('active', name === 'robot');
+            document.getElementById('tab_btn_student').classList.toggle('active', name === 'student');
+            document.getElementById('tab_btn_robot').classList.toggle('active', name === 'robot');
+        }
+
+        function toggleSettingsBlock(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const wasOpen = el.classList.contains('open');
+            document.querySelectorAll('.settings-block').forEach(b => b.classList.remove('open'));
+            if (!wasOpen) el.classList.add('open');
+        }
+
+        async function saveMusicServer() {
+            const btn = document.getElementById('btn_save_music');
+            btn.disabled = true;
+            let url = (document.getElementById('music_server_url').value || '').trim();
+            if (!url) url = DEFAULT_MUSIC_SERVER;
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ music_server_url: url })
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    showToast('❌ ' + (data.error || 'Lưu thất bại'));
+                } else {
+                    showToast('✅ Đã lưu server nhạc');
+                    await loadConfig();
+                }
+            } catch (err) {
+                showToast('Lỗi: ' + err.message);
+            }
+            btn.disabled = false;
+        }
+
+        function resetMusicServer() {
+            document.getElementById('music_server_url').value = DEFAULT_MUSIC_SERVER;
+            saveMusicServer();
+        }
         const COURSES = {
             0: { name: 'Tự cấu hình', units: [], subs: [] },
             1: { name: 'Explorers', units: [], subs: [
@@ -225,6 +318,7 @@
         let currentConfig = {
             preset_mac_idx: 1,
             student_name: '',
+            music_server_url: DEFAULT_MUSIC_SERVER,
             custom_mac: '',
             device_id: '',
             all_units: { 1: DEFAULT_UNITS, 2: DEFAULT_UNITS, 3: DEFAULT_UNITS, 4: DEFAULT_UNITS, 5: DEFAULT_UNITS },
@@ -742,8 +836,10 @@
                 }
                 currentConfig.device_id = data.device_id || '';
                 currentConfig.custom_mac = normalizeMacInput(data.custom_mac || '');
+                currentConfig.music_server_url = (data.music_server_url || DEFAULT_MUSIC_SERVER).trim() || DEFAULT_MUSIC_SERVER;
                 savedCustomMac = currentConfig.custom_mac;
                 document.getElementById('student_name').value = currentConfig.student_name;
+                document.getElementById('music_server_url').value = currentConfig.music_server_url;
                 if (currentConfig.preset_mac_idx === 0 || currentConfig.preset_mac_idx === MANUAL_MAC_IDX) {
                     document.getElementById('custom_mac').value = currentConfig.custom_mac;
                 }
@@ -763,12 +859,26 @@
             }
         }
 
+        async function dismissQr() {
+            const btn = document.getElementById('btn_dismiss_qr');
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/api/dismiss_qr', { method: 'POST' });
+                const data = await resp.json();
+                showToast(data.message || 'Đã tắt mã QR');
+            } catch (err) {
+                showToast('Lỗi tắt QR: ' + err.message);
+            }
+            btn.disabled = false;
+        }
+
         async function saveConfig() {
             const btn = document.getElementById('btn_save');
             btn.disabled = true;
             btn.textContent = 'Đang lưu...';
 
             currentConfig.student_name = document.getElementById('student_name').value.trim();
+            currentConfig.music_server_url = (document.getElementById('music_server_url').value || '').trim() || DEFAULT_MUSIC_SERVER;
             updateUnitsInConfig();
             const idx = currentConfig.preset_mac_idx;
             let mac = normalizeMacInput(document.getElementById('custom_mac').value);

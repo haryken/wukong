@@ -12,6 +12,17 @@ interface XiaozhiSessionApi {
     fun isAcceptingServerPcm(): Boolean
     fun setOnWebSocketSessionReady(callback: () -> Unit)
     fun forceStopPlaybackForHeyMini()
+    /**
+     * Otto EnterMusicOnlyMode: abort TTS, đóng WS, idle + wake word vẫn bật.
+     * Chỉ gọi khi MediaPlayer đã start (không gọi lúc TIM NHAC / search).
+     */
+    fun enterMusicOnlyMode()
+    /** Clear flag music-only (không đóng/mở kênh) — tránh kẹt chặn mic/PCM luồng chat cũ. */
+    fun exitMusicOnlyMode()
+    /**
+     * Otto WakeWordInvoke sau hết/fail nhạc: mở lại kênh nếu đã đóng, gửi detect [text].
+     */
+    fun sendSyntheticWakeDetect(text: String)
     fun onWakeOrResumeListening(forceReconnect: Boolean = false)
     fun onNewConversationTurn()
     fun wasWakeHandledRecently(): Boolean

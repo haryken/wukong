@@ -107,6 +107,9 @@ class XiaozhiMqttSessionManager(
     @Volatile
     private var sendCount = 0L
 
+    @Volatile
+    private var musicOnlyMode = false
+
     init {
         MiniRobotActionInvoker.setXiaozhiWireIdentities(deviceId, clientId)
         // Không defer goodbye bằng cờ sticky — ChatViewModel đóng theo server.
@@ -188,11 +191,15 @@ class XiaozhiMqttSessionManager(
     private fun handleTts(json: JSONObject) {
         when (json.optString("state")) {
             "start", "sentence_start" -> {
+                val text = json.optString("text", "")
+                if (text.contains("self.otto.music.play", ignoreCase = true)) {
+                    Log.i(TAG, "TTS chứa self.otto.music.play → giữ kênh đến MCP/stream")
+                    return
+                }
                 speaking = true
                 if (json.optString("state") == "start") {
                     mainHandler.post { onTtsStarted?.invoke() }
                 }
-                val text = json.optString("text", "")
                 if (text.isNotEmpty()) Log.i(TAG, "<< $text")
             }
             "stop", "end" -> {
@@ -209,6 +216,14 @@ class XiaozhiMqttSessionManager(
                         Log.w(TAG, "waitForPlaybackCompletion: ${e.message}")
                     }
                     speaking = false
+                    if (OttoMusicPlayer.isPlaying()) {
+                        Log.i(TAG, "TTS stop lúc đang phát nhạc local – không listen lại")
+                        return@launch
+                    }
+                    if (musicOnlyMode && !OttoMusicPlayer.isPlaying()) {
+                        Log.w(TAG, "musicOnlyMode kẹt → exit, tiếp tục listen")
+                        musicOnlyMode = false
+                    }
                     if (protocol.isAudioChannelOpened()) {
                         sendListen("sau TTS stop")
                         SafeWakeTing.playAsync(context, "sau TTS")
@@ -228,8 +243,12 @@ class XiaozhiMqttSessionManager(
             protocol.audioChannelStateFlow.collect { state ->
                 if (state == AudioState.CLOSED) {
                     speaking = false
-                    voiceArmed = false
-                    Log.i(TAG, "MQTT audio CLOSED – chờ wake (không cờ sticky)")
+                    if (OttoMusicPlayer.isPlaying() || musicOnlyMode) {
+                        Log.i(TAG, "MQTT CLOSED – music playing / music-only")
+                    } else {
+                        voiceArmed = false
+                        Log.i(TAG, "MQTT audio CLOSED – chờ wake (không cờ sticky)")
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -251,9 +270,11 @@ class XiaozhiMqttSessionManager(
 
     override fun isInFirstGreetingPhase(): Boolean = false
 
-    override fun isPlaybackOrGreetingActive(): Boolean = speaking
+    override fun isPlaybackOrGreetingActive(): Boolean =
+        speaking || OttoMusicPlayer.isPlaying()
 
-    override fun isAcceptingServerPcm(): Boolean = protocol.isAudioChannelOpened()
+    override fun isAcceptingServerPcm(): Boolean =
+        protocol.isAudioChannelOpened() && !OttoMusicPlayer.isPlaying()
 
     override fun setOnWebSocketSessionReady(callback: () -> Unit) {
         onSessionReady = callback
@@ -264,11 +285,94 @@ class XiaozhiMqttSessionManager(
 
     override fun forceStopPlaybackForHeyMini() {
         speaking = false
+        musicOnlyMode = false
         ttsStopJob?.cancel()
+        try {
+            OttoMusicPlayer.stop()
+        } catch (e: Exception) {
+            Log.w(TAG, "OttoMusic stop: ${e.message}")
+        }
         try {
             player.interruptPlayback()
         } catch (e: Exception) {
             Log.w(TAG, "interruptPlayback: ${e.message}")
+        }
+    }
+
+    override fun enterMusicOnlyMode() {
+        if (musicOnlyMode) {
+            Log.i(TAG, "Music-only đã vào – bỏ qua")
+            return
+        }
+        musicOnlyMode = true
+        speaking = false
+        ttsStopJob?.cancel()
+        Log.i(TAG, "Enter music-only: abort TTS + đóng kênh MQTT")
+        try {
+            player.interruptPlayback()
+        } catch (e: Exception) {
+            Log.w(TAG, "music-only interrupt: ${e.message}")
+        }
+        if (protocol.isAudioChannelOpened()) {
+            try {
+                protocol.closeAudioChannel()
+            } catch (e: Exception) {
+                Log.w(TAG, "music-only close: ${e.message}")
+            }
+        }
+    }
+
+    override fun exitMusicOnlyMode() {
+        if (!musicOnlyMode) return
+        musicOnlyMode = false
+        Log.i(TAG, "exitMusicOnlyMode – clear flag")
+    }
+
+    override fun sendSyntheticWakeDetect(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        scope.launch {
+            try {
+                musicOnlyMode = false
+                speaking = false
+                Log.i(TAG, "[SyntheticDetect] WakeWordInvoke \"$t\"")
+                try {
+                    player.interruptPlayback()
+                } catch (_: Exception) {
+                }
+                var opened = protocol.isAudioChannelOpened()
+                if (!opened) {
+                    for (attempt in 1..4) {
+                        Log.i(TAG, "[SyntheticDetect] openAudioChannel attempt=$attempt/4")
+                        try {
+                            val res = protocol.openAudioChannel()
+                            if (res.success && protocol.isAudioChannelOpened()) {
+                                XiaozhiMcpResponder.awaitInitializeResponded()
+                                opened = true
+                                break
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[SyntheticDetect] open attempt $attempt: ${e.message}")
+                        }
+                        delay(1500L * attempt)
+                    }
+                }
+                if (!opened) {
+                    Log.e(TAG, "[SyntheticDetect] không mở được kênh – chờ hey mini")
+                    voiceArmed = false
+                    mainHandler.post { onTtsStoppedRestartMic?.invoke() }
+                    return@launch
+                }
+                protocol.sendWakeWordDetected(t)
+                delay(80)
+                sendListen("synthetic:$t")
+                voiceArmed = true
+                onSessionReady?.invoke()
+                mainHandler.post { onTtsStoppedRestartMic?.invoke() }
+            } catch (e: Exception) {
+                Log.e(TAG, "[SyntheticDetect] $t: ${e.message}", e)
+                voiceArmed = false
+            }
         }
     }
 

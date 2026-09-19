@@ -583,8 +583,10 @@ public final class MiniRobotActionInvoker {
                     invokeSquatDown();
                     return;
                 }
-                if (n.contains("otto.stop") || (n.contains("otto") && n.endsWith(".stop"))) {
+                if (n.contains("otto.stop") || (n.contains("otto") && n.endsWith(".stop")
+                        && !n.contains("music.stop"))) {
                     ExploreModeController.stop();
+                    OttoMusicPlayer.stop();
                     invokeStopAction();
                     return;
                 }

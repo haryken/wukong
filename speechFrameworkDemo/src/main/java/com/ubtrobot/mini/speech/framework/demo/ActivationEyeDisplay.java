@@ -60,6 +60,8 @@ public class ActivationEyeDisplay {
   private static final long CODE_HOLD_MS = 8_000L;
   /** URL + QR trên mắt (wifi provision / Self-Control): ~1 phút. */
   private static final long SELF_CONTROL_HOLD_MS = 60_000L;
+  /** Chống blink hệ thống đè QR — reclaim nhanh hơn chu kỳ chớp mắt. */
+  private static final long QR_RECLAIM_MS = 400L;
   private static final long WIFI_STATUS_HOLD_MS = 5_000L;
   private static final long PAUSE_AFTER_DIGIT_MS = 400L;
 
@@ -235,6 +237,55 @@ public class ActivationEyeDisplay {
     }
   }
 
+  /**
+   * Trạng thái nhạc: hiện chữ ngay, giữ đến status tiếp theo (không block 8s như {@link #showCode}).
+   * Mỗi lần gọi tăng epoch → hủy frame cũ.
+   * Không đè khi đang hiện QR cấu hình (log: TIM NHAC / express đè → user không thấy QR).
+   */
+  public static void showStickyStatusCode(String code) {
+    if (code == null || code.length() == 0) {
+      Log.w(TAG, "sticky status empty");
+      return;
+    }
+    if (isQrShowing()) {
+      Log.i(TAG, "showStickyStatusCode bỏ qua \"" + code + "\" – đang hiện QR cấu hình");
+      return;
+    }
+    notifyUi(code);
+    new Thread(
+            () -> {
+              try {
+                forceShowStatusBitmap(
+                    renderSingleLineBitmap(code, CODE_MAX_TEXT_SIZE, CODE_MIN_TEXT_SIZE), 0L);
+              } catch (Exception e) {
+                Log.w(TAG, "showStickyStatusCode: " + e.getMessage());
+              }
+            },
+            "StickyStatusEyes")
+        .start();
+  }
+
+  /** Hết nhạc / dừng — bỏ sticky, restore mắt. */
+  public static void clearStickyStatus(String reason) {
+    if (isQrShowing()) {
+      Log.i(TAG, "clearStickyStatus bỏ qua (" + reason + ") – đang hiện QR");
+      return;
+    }
+    eyeEpoch.incrementAndGet();
+    playing.set(false);
+    new Thread(
+            () -> {
+              try {
+                restoreNormalEyesFast();
+                Log.i(TAG, "clearStickyStatus: " + reason);
+              } catch (Exception e) {
+                Log.w(TAG, "clearStickyStatus: " + e.getMessage());
+              }
+            },
+            "ClearStickyEyes")
+        .start();
+  }
+
   /** Gõ đầu 2 lần: IP 1 dòng nhỏ trên mắt trái + phải, 10s rồi restore. */
   public static void showRobotIpOnEyes() {
     String ip = readWifiIpv4();
@@ -312,14 +363,18 @@ public class ActivationEyeDisplay {
       if (!rightOk) {
         drawOneEye(api, right, EYE_BOTH, "BOTH-QR");
       }
-      Log.i(TAG, "Self-Control put cached bitmaps once – hold " + (SELF_CONTROL_HOLD_MS / 1000) + "s (no redraw)");
+      Log.i(TAG, "Self-Control put bitmaps – hold " + (SELF_CONTROL_HOLD_MS / 1000)
+          + "s (chống blink: stopExpress + redraw ~400ms)");
 
-      sleepWhileEpoch(epoch, SELF_CONTROL_HOLD_MS);
+      // Blink/express hệ thống đè bitmap → QR “chớp theo”. Reclaim nhanh, không đợi 2.5s.
+      holdQrAgainstBlink(epoch, api, left, right);
       if (eyeEpoch.get() == epoch) {
         stickyConfigEyes.set(false);
         qrShowing.set(false);
         restoreNormalEyesFast();
         Log.i(TAG, "Self-Control IP+QR hết hold — restore mắt");
+      } else {
+        Log.w(TAG, "Self-Control IP+QR bị epoch mới cắt sớm");
       }
     } catch (Exception e) {
       Log.e(TAG, "showSelfControlIpAndQr: " + e.getMessage(), e);
@@ -352,11 +407,16 @@ public class ActivationEyeDisplay {
     Log.i(TAG, "Provision mắt: LEFT=SSID+URL RIGHT=QR 60s → ssid=" + ssid + " url=" + u);
     notifyUi((ssid.isEmpty() ? "" : ssid + "\n") + u);
     qrShowing.set(true);
+    stickyConfigEyes.set(true);
     playing.set(true);
     Bitmap left = null;
     Bitmap right = null;
     try {
       EyeScreenApi api = EyeScreenApi.get();
+      try {
+        ExpressApi.get().stopExpress();
+      } catch (Exception ignored) {
+      }
       left = renderProvisionUrlBitmap(ssid, u);
       drawOneEye(api, left, EYE_LEFT, "LEFT-PROVISION");
       drawOneEye(api, left, EYE_BOTH, "BOTH-PROV-TMP");
@@ -367,20 +427,62 @@ public class ActivationEyeDisplay {
       if (!rightOk) {
         drawOneEye(api, right, EYE_BOTH, "BOTH-QR");
       }
-      sleepWhileEpoch(epoch, SELF_CONTROL_HOLD_MS);
+      holdQrAgainstBlink(epoch, api, left, right);
       if (eyeEpoch.get() == epoch) {
+        stickyConfigEyes.set(false);
+        qrShowing.set(false);
         restoreNormalEyesFast();
         Log.i(TAG, "Provision URL+QR hết 60s — restore mắt");
       }
     } catch (Exception e) {
       Log.e(TAG, "showWifiProvisionUrlAndQr: " + e.getMessage(), e);
+      stickyConfigEyes.set(false);
+      qrShowing.set(false);
       if (eyeEpoch.get() == epoch) restoreNormalEyesFast();
     } finally {
       if (left != null && !left.isRecycled()) left.recycle();
       if (right != null && !right.isRecycled()) right.recycle();
       playing.set(false);
       if (eyeEpoch.get() == epoch) {
+        stickyConfigEyes.set(false);
         qrShowing.set(false);
+      }
+    }
+  }
+
+  /**
+   * Giữ QR ổn định: mỗi {@link #QR_RECLAIM_MS} stopExpress rồi vẽ lại L/R
+   * (blink ROM đè bitmap → QR chớp theo nếu reclaim chậm).
+   */
+  private static void holdQrAgainstBlink(int epoch, EyeScreenApi api, Bitmap left, Bitmap right) {
+    long holdEnd = System.currentTimeMillis() + SELF_CONTROL_HOLD_MS;
+    while (System.currentTimeMillis() < holdEnd && eyeEpoch.get() == epoch) {
+      long slice = Math.min(QR_RECLAIM_MS, holdEnd - System.currentTimeMillis());
+      if (slice <= 0) break;
+      sleepWhileEpoch(epoch, slice);
+      if (eyeEpoch.get() != epoch) break;
+      if (System.currentTimeMillis() >= holdEnd) break;
+      try {
+        ExpressApi.get().stopExpress();
+      } catch (Exception ignored) {
+      }
+      if (eyeEpoch.get() != epoch) break;
+      // Vẽ im (không spam log mỗi 400ms).
+      if (left != null && !left.isRecycled()) {
+        try {
+          api.drawBitmap(left, EYE_LEFT);
+        } catch (Exception ignored) {
+        }
+      }
+      if (right != null && !right.isRecycled()) {
+        try {
+          api.drawBitmap(right, EYE_RIGHT);
+        } catch (Exception e) {
+          try {
+            api.drawBitmap(right, EYE_BOTH);
+          } catch (Exception ignored) {
+          }
+        }
       }
     }
   }

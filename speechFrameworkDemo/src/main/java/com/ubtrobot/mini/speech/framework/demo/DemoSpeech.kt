@@ -640,6 +640,33 @@ object DemoSpeech : SpeechModuleFactory() {
         }
     }
 
+    /**
+     * Otto EnterMusicOnlyMode — đóng WS trước khi tìm/phát nhạc.
+     */
+    @JvmStatic
+    fun enterMusicOnlyMode() {
+        LogUtils.i(TAG, "enterMusicOnlyMode")
+        xiaozhiSessionRef?.enterMusicOnlyMode()
+    }
+
+    @JvmStatic
+    fun exitMusicOnlyMode() {
+        LogUtils.i(TAG, "exitMusicOnlyMode")
+        xiaozhiSessionRef?.exitMusicOnlyMode()
+    }
+
+    /**
+     * Detect wake giả (Otto: NotifyMusic* → WakeWordInvoke).
+     * Mở lại WS nếu music-only đã đóng kênh.
+     */
+    @JvmStatic
+    fun requestSyntheticDetect(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        LogUtils.i(TAG, "requestSyntheticDetect \"$t\"")
+        xiaozhiSessionRef?.sendSyntheticWakeDetect(t)
+    }
+
     /** MCP set_course / voice đổi khóa. */
     @JvmStatic
     fun selfControlSetCourse(courseIdx: Int, customMac: String?): String {
@@ -777,6 +804,24 @@ object DemoSpeech : SpeechModuleFactory() {
             LogUtils.w(TAG, "recoverTalkAfterShowConfig: ${e.message}")
         }
         return "Đã mở mã QR."
+    }
+
+    /**
+     * MCP / voice: tắt mã QR Self-Control trên mắt (giống gõ đầu 2 lần khi đang hiện QR).
+     */
+    @JvmStatic
+    fun selfControlHideConfigPage(): String {
+        val showing = ActivationEyeDisplay.isQrShowing()
+        try {
+            com.ubtrobot.mini.speech.framework.demo.wificonfig.WifiProvisionController
+                .markConfigQrSticky(false)
+            ActivationEyeDisplay.dismissQrEyes()
+            LogUtils.i(TAG, "hide_config_page → dismissQrEyes (wasShowing=$showing)")
+        } catch (e: Exception) {
+            LogUtils.e(TAG, "hide_config_page: ${e.message}", e)
+            return "Không tắt được mã QR."
+        }
+        return if (showing) "Đã tắt mã QR." else "Không có mã QR đang hiện."
     }
 
     /** Head double-tap hiện QR — cùng recover WS nếu SSL abort. */

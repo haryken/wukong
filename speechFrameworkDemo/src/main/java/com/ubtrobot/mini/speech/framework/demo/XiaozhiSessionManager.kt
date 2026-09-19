@@ -101,6 +101,9 @@ class XiaozhiSessionManager private constructor(
     override fun isAcceptingServerPcm(): Boolean = delegate.isAcceptingServerPcm()
     override fun setOnWebSocketSessionReady(callback: () -> Unit) = delegate.setOnWebSocketSessionReady(callback)
     override fun forceStopPlaybackForHeyMini() = delegate.forceStopPlaybackForHeyMini()
+    override fun enterMusicOnlyMode() = delegate.enterMusicOnlyMode()
+    override fun exitMusicOnlyMode() = delegate.exitMusicOnlyMode()
+    override fun sendSyntheticWakeDetect(text: String) = delegate.sendSyntheticWakeDetect(text)
     override fun onWakeOrResumeListening(forceReconnect: Boolean) =
         delegate.onWakeOrResumeListening(forceReconnect)
     override fun onNewConversationTurn() = delegate.onNewConversationTurn()
