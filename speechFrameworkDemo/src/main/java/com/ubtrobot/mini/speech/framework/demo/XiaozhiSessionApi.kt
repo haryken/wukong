@@ -2,6 +2,7 @@ package com.ubtrobot.mini.speech.framework.demo
 
 /**
  * API Xiaozhi (WebSocket hoặc MQTT+UDP) cho DemoRecognizer / DemoSpeech.
+ * Luồng nói = commit 2b23f8d. Chỉ thêm identity hooks cho Self-Control Apply.
  */
 interface XiaozhiSessionApi {
     fun getTransportLabel(): String
@@ -15,17 +16,11 @@ interface XiaozhiSessionApi {
     fun onNewConversationTurn()
     fun wasWakeHandledRecently(): Boolean
     fun sendPcmFrameFromJava(frame: ByteArray)
-    /** True khi WS/MQTT audio channel đã mở và nhận server hello. */
+    /** Self-Control Apply: kênh đã mở? */
     fun isAudioChannelOpened(): Boolean
-    /**
-     * Sau show_config_page: nếu WS đứt (SSL abort khi vẽ mắt) thì tự mở lại kênh nói,
-     * không bắt buộc hey mini ngay.
-     */
+    /** Sau hiện QR: nếu WS đứt thì thử mở lại (không đụng timing nói thường). */
     fun recoverTalkAfterShowConfig()
-    /**
-     * Otto ApplyDeviceIdentity: đóng kênh cũ sạch → Device-Id mới → mở kênh mới (giữ session/Opus).
-     * @return true nếu kênh mới đã mở.
-     */
+    /** Self-Control: đóng → Device-Id/Client-Id mới → mở lại. */
     fun switchDeviceIdentity(deviceId: String, clientId: String): Boolean
     fun dispose()
 }

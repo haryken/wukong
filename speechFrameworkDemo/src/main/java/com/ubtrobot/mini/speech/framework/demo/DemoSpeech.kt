@@ -22,6 +22,11 @@ import com.ubtrobot.mini.speech.framework.ServiceConstants
 import com.ubtrobot.mini.speech.framework.SpeechModuleFactory
 import com.ubtrobot.mini.speech.framework.SpeechSettingStub
 import com.ubtrobot.mini.speech.framework.WakeupAudioPlayer
+import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlHttpServer
+import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlMqttIdentityPatch
+import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlPresets
+import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlStore
+import java.util.concurrent.atomic.AtomicInteger
 import com.ubtrobot.mini.speech.framework.skill.SkillManager
 import com.ubtrobot.mini.speech.framework.utils.MicApiHelper
 import com.ubtrobot.mini.speech.framework.utils.ShakeHeadUtils
@@ -54,11 +59,6 @@ import com.ubtrobot.ulog.FwLoggerFactory2
 import info.dourok.voicebot.data.model.DeviceInfo
 import info.dourok.voicebot.data.model.DummyDataGenerator
 import info.dourok.voicebot.data.model.toJson
-import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlHttpServer
-import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlMqttIdentityPatch
-import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlPresets
-import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlStore
-import java.util.concurrent.atomic.AtomicInteger
 /**
  * <p>Created 06/03. </p>
  * <p>Copyright 2019 @feng.zhang</p>
@@ -67,12 +67,6 @@ import java.util.concurrent.atomic.AtomicInteger
 object DemoSpeech : SpeechModuleFactory() {
     private val LOGGER = FwLoggerFactory2.getLogger("Speech-Chain")
     private const val TAG = "SpeechFactory"
-    /** Bỏ apply cũ khi user đổi khóa liên tục trên web. */
-    private val identityApplyGen = AtomicInteger(0)
-    /** Device-Id đã apply thành công lần gần nhất (tránh dispose/reopen thừa → đơ). */
-    @Volatile private var lastAppliedDeviceId: String? = null
-    @Volatile private var lastLocalShowConfigMs = 0L
-    @Volatile private var lastLocalShiftUnitMs = 0L
 
     private val appContext by lazy { Utils.getContext().applicationContext }
 
@@ -102,12 +96,11 @@ object DemoSpeech : SpeechModuleFactory() {
     /** Hey mini / chạm đầu vừa xảy ra — dùng khi OTA swap transport hủy wake giữa chừng. */
     @Volatile
     private var lastWakeAtMs: Long = 0L
-    /**
-     * Chạm đầu lúc DingDang/sherpa còn init: ThreadPool có thể bị [waitUntilReady] chiếm ≤15s
-     * → handleWakeup (và ting) xếp hàng trễ. Ting phát ngay; wake đầy đủ chạy khi recognizer sẵn sàng.
-     */
-    @Volatile
-    private var pendingHeadWake: Boolean = false
+
+    private val identityApplyGen = AtomicInteger(0)
+    @Volatile private var lastAppliedDeviceId: String? = null
+    @Volatile private var lastLocalShowConfigMs = 0L
+    @Volatile private var lastLocalShiftUnitMs = 0L
 
     private var mRecognizerListener: RecognizerListener? = null
     private var mSynthesizerListener: SynthesizerListener? = null
@@ -313,212 +306,100 @@ object DemoSpeech : SpeechModuleFactory() {
         }
         setupHeadTouchTrigger(hostService, service)
 
-        // StandUp sớm + retry — motor/Master đôi khi chưa sẵn lúc WS ready → “app mở mà không đứng”.
-        scheduleBootStandUpRetries()
-
-        // Boot nhanh: Xiaozhi + mic + sherpa SONG SONG, không chờ DingDang (hay chậm 5–20s).
-        Thread({
-            bootstrapXiaozhiFastPath(hostService, service, wakeUpDetector)
-        }, "XiaozhiFastBoot").start()
-        Thread({
-            startSherpaAndMicWhenReady(wakeUpDetector, hostService, service)
-        }, "SherpaKwsReady").start()
-
-        // DingDang: framework VAD / CompositeSpeechService (song song; không chặn head-wake).
+        //init DingDang
         DingDangManager.load(appContext) { success ->
             if (success) {
+                // Heavy init (VAD, sherpa KWS, CompositeSpeechService) blocks - run off main thread to avoid ANR
                 ThreadPool.runOnNonUIThread {
-                    completeDingDangSpeechStack(hostService, service, wakeUpDetector)
+                    asrRecorder = TencentVadRecorder(ResourceLoader.vad_path)
+                    // Giống Xiaozhi_Android-main: KHÔNG dùng generateAudioSessionId(). Cả AudioTrack (TTS) và AudioRecord (mic) dùng session mặc định (0)
+                    // thì AEC mới tạo được (một số thiết bị dùng session tùy chỉnh báo "not enough memory" / -22).
+                    val audioSessionId = 0
+                    xiaozhiAudioSessionId = audioSessionId
+                    val xiaozhi = createXiaozhiSessionManager(audioSessionId)
+                    xiaozhiSessionRef = xiaozhi
+                    // Ready mức 2 (online): session manager sẽ callback sau khi kênh đã mở + listen đã gửi.
+                    xiaozhi?.setOnWebSocketSessionReady {
+                        if (onlineReadySignaled) return@setOnWebSocketSessionReady
+                        onlineReadySignaled = true
+                        Handler(Looper.getMainLooper()).post {
+                            try {
+                                // 2 beep/ting báo "online ready"
+                                WakeupAudioPlayer.get(appContext).play()
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    try {
+                                        WakeupAudioPlayer.get(appContext).play()
+                                    } catch (_: Exception) {
+                                    }
+                                }, 160L)
+                            } catch (_: Exception) {
+                            }
+                        }
+                        ThreadPool.runOnNonUIThread {
+                            try {
+                                LogUtils.i(TAG, "[Ready] Online ready → StandUp")
+                                MiniRobotActionInvoker.performStandUpSync()
+                            } catch (e: Exception) {
+                                LogUtils.w(TAG, "StandUp on online-ready: ${e.message}")
+                            }
+                        }
+                    }
+                    val opusLabel = when {
+                        xiaozhi == null -> "NULL (Opus init fail)"
+                        NativeOpusBootstrap.isNativeAvailable() ->
+                            "OK (${xiaozhiTransportLabel()} + native libapp.so + ổn định 1)"
+                        else ->
+                            "OK (${xiaozhiTransportLabel()} + Concentus — nên rebuild native)"
+                    }
+                    LogUtils.i(TAG, "XiaozhiSessionManager: $opusLabel")
+                    recognizer = DemoRecognizer(asrRecorder!!, xiaozhi, audioSessionId)
+                    (recognizer as? DemoRecognizer)?.setWakeWordPcmFeeder(wakeUpDetector)
+                    recognizer!!.registerListener(mRecognizerListener)
+                    synthesizer = DemoSynthesizer()
+                    synthesizer!!.registerListener(mSynthesizerListener)
+                    understander = DemoUnderstander()
+                    understander!!.registerListener(mUnderstanderListener)
+                    speechServiceStub = CompositeSpeechService.Builder()
+                            .setRecognizer(recognizer)
+                            .setSynthesizer(synthesizer)
+                            .setUnderstander(understander)
+                            .setWakeUpDetector(wakeUpDetector)
+                            .build()
+                    wakeUpDetector.start()
+                    val kwsReady = wakeUpDetector.waitUntilReady(15_000L)
+                    if (kwsReady) {
+                        (recognizer as? DemoRecognizer)?.startMicForWakeWord()
+                        LogUtils.i(TAG, "[WakeWord] mic started – sherpa ready, say HEY MINI")
+                        // Ready mức 1 (local): KWS + head-touch đã đăng ký, báo 1 beep ngắn.
+                        if (!localReadySignaled) {
+                            localReadySignaled = true
+                            Handler(Looper.getMainLooper()).post {
+                                try {
+                                    WakeupAudioPlayer.get(appContext).play()
+                                } catch (_: Exception) {
+                                }
+                            }
+                        }
+                    } else {
+                        LogUtils.e(TAG, "[WakeWord] sherpa not ready – mic NOT started (check sherpa-kws ONNX bundle)")
+                    }
+                    LogUtils.i("init success (background).")
+
+                    // Publish events on main thread (framework may require it)
+                    Handler(Looper.getMainLooper()).post {
+                        hostService.publishCarefully(
+                                ServiceConstants.ACTION_SPEECH_INIT_RESULT,
+                                ParcelableParam.create(InitResult(0)))
+                        NotificationCenter.defaultCenter().publish(
+                                ServiceConstants.PATH_MICROPHONE_ARRAY_INIT_RESULT, this)
+                        ThreadPool.runOnNonUIThread { runXiaozhiOtaAndShowActivation() }
+                    }
                 }
             } else {
                 LogUtils.e(
                         "Initialization configuration of wake-up module failed, restart application...")
                 Process.killProcess(Process.myPid())
             }
-        }
-    }
-
-    private val xiaozhiFastBootLock = Any()
-    @Volatile
-    private var xiaozhiFastBootDone: Boolean = false
-    @Volatile
-    private var bootStandUpAttempted: Boolean = false
-
-    /** Gọi StandUp vài lần sau boot — lần đầu thường fail nếu fallclimb/Master chưa lên. */
-    private fun scheduleBootStandUpRetries() {
-        val delaysMs = longArrayOf(1_200L, 3_500L, 7_000L)
-        for (d in delaysMs) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                Thread({
-                    try {
-                        LogUtils.i(TAG, "[Ready] Boot StandUp retry (delay=${d}ms)")
-                        MiniRobotActionInvoker.performStandUpSync()
-                        bootStandUpAttempted = true
-                    } catch (e: Exception) {
-                        LogUtils.w(TAG, "Boot StandUp: ${e.message}")
-                    }
-                }, "BootStandUp").start()
-            }, d)
-        }
-    }
-
-    private fun signalOnlineReadyAndStandUp() {
-        if (onlineReadySignaled) return
-        onlineReadySignaled = true
-        try {
-            lastAppliedDeviceId = XiaozhiDeviceIdentityStore.getOrCreate(appContext).deviceId
-        } catch (_: Exception) {
-        }
-        Handler(Looper.getMainLooper()).post {
-            // Giống 2b23f8d: WakeupAudioPlayer (không SafeWakeTing).
-            try {
-                WakeupAudioPlayer.get(appContext).play()
-            } catch (_: Exception) {
-            }
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    WakeupAudioPlayer.get(appContext).play()
-                } catch (_: Exception) {
-                }
-            }, 160L)
-        }
-        Thread({
-            try {
-                LogUtils.i(TAG, "[Ready] Online ready → StandUp")
-                MiniRobotActionInvoker.performStandUpSync()
-                bootStandUpAttempted = true
-            } catch (e: Exception) {
-                LogUtils.w(TAG, "StandUp on online-ready: ${e.message}")
-            }
-        }, "OnlineStandUp").start()
-    }
-
-    /**
-     * Không chờ DingDang: mở WS + tạo DemoRecognizer (VadRecorder=null) → chạm đầu / wake được sớm.
-     */
-    private fun bootstrapXiaozhiFastPath(
-        hostService: MasterSystemService,
-        service: MasterSystemService,
-        wakeUpDetector: SherpaOnnxWakeUpDetector
-    ) {
-        synchronized(xiaozhiFastBootLock) {
-            if (xiaozhiFastBootDone && xiaozhiSessionRef != null && recognizer != null) {
-                flushPendingHeadWake(hostService, service)
-                return
-            }
-            try {
-                val audioSessionId = 0
-                xiaozhiAudioSessionId = audioSessionId
-                if (xiaozhiSessionRef == null) {
-                    val xiaozhi = createXiaozhiSessionManager(audioSessionId)
-                    xiaozhiSessionRef = xiaozhi
-                    xiaozhi?.setOnWebSocketSessionReady {
-                        signalOnlineReadyAndStandUp()
-                    }
-                    val opusLabel = when {
-                        xiaozhi == null -> "NULL (Opus init fail)"
-                        NativeOpusBootstrap.isNativeAvailable() ->
-                            "OK (${xiaozhiTransportLabel()} + native libapp.so, fast-boot)"
-                        else ->
-                            "OK (${xiaozhiTransportLabel()} + Concentus, fast-boot)"
-                    }
-                    LogUtils.i(TAG, "XiaozhiSessionManager: $opusLabel")
-                }
-                if (recognizer == null) {
-                    recognizer = DemoRecognizer(null, xiaozhiSessionRef, audioSessionId)
-                    (recognizer as? DemoRecognizer)?.setWakeWordPcmFeeder(wakeUpDetector)
-                    if (mRecognizerListener != null) {
-                        recognizer!!.registerListener(mRecognizerListener)
-                    }
-                    // Mic sớm cho head-wake / PCM (sherpa có thể chưa ready — vẫn feed khi ready).
-                    (recognizer as? DemoRecognizer)?.startMicForWakeWord()
-                    LogUtils.i(TAG, "[Boot] fast-path: recognizer+mic OK – chạm đầu / wake được")
-                }
-                xiaozhiFastBootDone = true
-                flushPendingHeadWake(hostService, service)
-            } catch (e: Exception) {
-                LogUtils.e(TAG, "bootstrapXiaozhiFastPath: ${e.message}", e)
-            }
-        }
-    }
-
-    private fun startSherpaAndMicWhenReady(
-        wakeUpDetector: SherpaOnnxWakeUpDetector,
-        hostService: MasterSystemService,
-        service: MasterSystemService
-    ) {
-        try {
-            wakeUpDetector.start()
-            val kwsReady = wakeUpDetector.waitUntilReady(15_000L)
-            if (kwsReady) {
-                (recognizer as? DemoRecognizer)?.startMicForWakeWord()
-                LogUtils.i(TAG, "[WakeWord] mic started – sherpa ready, say HEY MINI")
-                if (!localReadySignaled) {
-                    localReadySignaled = true
-                    try {
-                        WakeupAudioPlayer.get(appContext).play()
-                    } catch (_: Exception) {
-                    }
-                }
-            } else {
-                LogUtils.e(TAG, "[WakeWord] sherpa not ready – check sherpa-kws ONNX bundle")
-            }
-            flushPendingHeadWake(hostService, service)
-        } catch (e: Exception) {
-            LogUtils.e(TAG, "startSherpaAndMicWhenReady: ${e.message}", e)
-        }
-    }
-
-    /** Sau DingDang: gắn VAD + CompositeSpeechService; tái dùng Xiaozhi nếu fast-boot đã tạo. */
-    private fun completeDingDangSpeechStack(
-        hostService: MasterSystemService,
-        service: MasterSystemService,
-        wakeUpDetector: SherpaOnnxWakeUpDetector
-    ) {
-        try {
-            asrRecorder = TencentVadRecorder(ResourceLoader.vad_path)
-            val audioSessionId = xiaozhiAudioSessionId
-            synchronized(xiaozhiFastBootLock) {
-                if (xiaozhiSessionRef == null) {
-                    val xiaozhi = createXiaozhiSessionManager(audioSessionId)
-                    xiaozhiSessionRef = xiaozhi
-                    xiaozhi?.setOnWebSocketSessionReady {
-                        signalOnlineReadyAndStandUp()
-                    }
-                }
-                if (recognizer == null) {
-                    recognizer = DemoRecognizer(asrRecorder, xiaozhiSessionRef, audioSessionId)
-                    (recognizer as? DemoRecognizer)?.setWakeWordPcmFeeder(wakeUpDetector)
-                    recognizer!!.registerListener(mRecognizerListener)
-                    (recognizer as? DemoRecognizer)?.startMicForWakeWord()
-                } else {
-                    (recognizer as? DemoRecognizer)?.attachVadRecorder(asrRecorder!!)
-                    (recognizer as? DemoRecognizer)?.updateXiaozhiSession(xiaozhiSessionRef)
-                }
-            }
-            synthesizer = DemoSynthesizer()
-            synthesizer!!.registerListener(mSynthesizerListener)
-            understander = DemoUnderstander()
-            understander!!.registerListener(mUnderstanderListener)
-            speechServiceStub = CompositeSpeechService.Builder()
-                    .setRecognizer(recognizer)
-                    .setSynthesizer(synthesizer)
-                    .setUnderstander(understander)
-                    .setWakeUpDetector(wakeUpDetector)
-                    .build()
-            LogUtils.i(TAG, "init success (DingDang stack).")
-            flushPendingHeadWake(hostService, service)
-
-            Handler(Looper.getMainLooper()).post {
-                hostService.publishCarefully(
-                        ServiceConstants.ACTION_SPEECH_INIT_RESULT,
-                        ParcelableParam.create(InitResult(0)))
-                NotificationCenter.defaultCenter().publish(
-                        ServiceConstants.PATH_MICROPHONE_ARRAY_INIT_RESULT, this)
-                ThreadPool.runOnNonUIThread { runXiaozhiOtaAndShowActivation() }
-            }
-        } catch (e: Exception) {
-            LogUtils.e(TAG, "completeDingDangSpeechStack: ${e.message}", e)
         }
     }
 
@@ -610,7 +491,6 @@ object DemoSpeech : SpeechModuleFactory() {
             audioSessionId = audioSessionId,
             onTtsStarted = {
                 Handler(Looper.getMainLooper()).post {
-                    // Giống 2b23f8d: suppress dài khi TTS chào (greeting), ngắn khi TTS thường.
                     if (xiaozhiSessionRef?.isInFirstGreetingPhase() == true) {
                         LogUtils.d(TAG, "[WakeWord] TTS chào – suppress KWS đến sau ting (echo loa)")
                         wakeUpDetectorRef?.suppressWakeFor(12_000L)
@@ -632,7 +512,7 @@ object DemoSpeech : SpeechModuleFactory() {
         )
     }
 
-    /**
+        /**
      * ApplyDeviceIdentity (Otto / ESP32 fast path): đóng session → Device-Id mới → mở WS/MQTT → auto chào.
      * Không CheckVersion / không OTA. Cùng MAC + kênh đang mở → bỏ qua (tránh cắt TTS / đơ mạng).
      */
@@ -707,7 +587,7 @@ object DemoSpeech : SpeechModuleFactory() {
                     LogUtils.w(TAG, "ApplyDeviceIdentity dispose: ${e.message}")
                 }
 
-                // Fallback recreate: nghỉ ngắn rồi mở TCP (không sleep 500ms như bản sau).
+                // Fallback recreate: đợi NAT/TLS nhả trước khi mở TCP mới.
                 try {
                     Thread.sleep(100)
                 } catch (_: InterruptedException) {
@@ -994,10 +874,7 @@ object DemoSpeech : SpeechModuleFactory() {
         return true
     }
 
-    /**
-     * Đổi transport từ UI (sau khi OTA đã có mqtt config nếu chọn MQTT).
-     * Gọi từ MainActivity — swap session trên recognizer đang chạy.
-     */
+
     @JvmStatic
     fun applyTransportFromUi(@Suppress("UNUSED_PARAMETER") context: Context): String {
         val transport = XiaozhiTransportPreference.get(context)
@@ -1041,11 +918,6 @@ object DemoSpeech : SpeechModuleFactory() {
         }, 800)
     }
 
-    /**
-     * Boot OTA: lấy mqtt config nếu có. Chỉ hiện mã trên UI khi server trả activation
-     * (thiết bị chưa bind). Không hiện mắt; không tạo mã local giả khi timeout.
-     * Đổi MAC / ApplyDeviceIdentity — không gọi lại hàm này (giống ESP32).
-     */
     private fun runXiaozhiOtaAndShowActivation() {
         try {
             XiaozhiActivationStore.init(appContext)
@@ -1070,15 +942,18 @@ object DemoSpeech : SpeechModuleFactory() {
                 )
             }
             if (!ok) {
-                // ESP32 cũng không invent mã local khi CheckVersion fail — không vẽ mắt / không spam UI.
-                LogUtils.w(TAG, "Xiaozhi OTA check failed — bỏ qua hiện mã (đã activate thì WS vẫn dùng được)")
+                LogUtils.w(TAG, "Xiaozhi OTA check failed")
+                val localCode = XiaozhiActivationCode.generate6Digits(deviceId, clientId)
+                LogUtils.i("Fallback activation code (local): $localCode")
+                ActivationEyeDisplay.showCode(localCode)
                 return
             }
             val activation = client.otaResult?.activation
             if (activation == null || activation.code.isEmpty()) {
-                // Không có activation trong OTA = server coi device đã bind — giống ESP32 skip UI.
-                XiaozhiActivationStore.markActivated()
-                LogUtils.i(TAG, "OTA không trả activation — coi như đã kích hoạt, không hiện mã")
+                LogUtils.w(TAG, "No activation code in OTA result — thử POST /activate (ESP32 path)")
+                val localCode = XiaozhiActivationCode.generate6Digits(deviceId, clientId)
+                ActivationEyeDisplay.showCode(localCode)
+                XiaozhiOtaActivationCoordinator.startPollIfNeeded("sau OTA (không có code)")
                 return
             }
             LogUtils.i(
@@ -1086,8 +961,7 @@ object DemoSpeech : SpeechModuleFactory() {
                 "Xiaozhi activation code: ${activation.code} challenge=" +
                     if (activation.challenge.isEmpty()) "MISSING" else "ok"
             )
-            // Chỉ UI (MainActivity TextView), không hiện trên mắt robot.
-            ActivationEyeDisplay.showCodeOnUiOnly(activation.code)
+            ActivationEyeDisplay.showCode(activation.code)
             XiaozhiOtaActivationCoordinator.startPollIfNeeded("sau OTA")
         } catch (e: Exception) {
             LogUtils.e(TAG, "runXiaozhiOtaAndShowActivation error: $e")
@@ -1122,9 +996,9 @@ object DemoSpeech : SpeechModuleFactory() {
 
     /** Khởi động lại recognition (hey mini / head-touch) – đóng WS cũ, mở mới, send listen. */
     fun restartXiaozhiRecognition() {
-        ThreadPool.runOnNonUIThread {
+        Handler(Looper.getMainLooper()).post {
             try {
-                LogUtils.i(TAG, "restartXiaozhiRecognition: starting off main")
+                LogUtils.i(TAG, "restartXiaozhiRecognition: starting on main thread")
                 (recognizer as? DemoRecognizer)?.startRecognitionAfterWakeup()
                 LogUtils.i(TAG, "restartXiaozhiRecognition: done")
             } catch (e: Exception) {
@@ -1133,11 +1007,11 @@ object DemoSpeech : SpeechModuleFactory() {
         }
     }
 
-    /** Sau TTS stop: chỉ ensure mic đang chạy — không stop+start (Alpha Mini + ting → AudioFlinger chết). */
+    /** Sau TTS stop + reconnect: mic + recognizer; KWS đã chạy từ init – không gọi start() lại. */
     private fun resumeXiaozhiMicAfterTts() {
-        ThreadPool.runOnNonUIThread {
+        Handler(Looper.getMainLooper()).post {
             try {
-                LogUtils.i(TAG, "resumeXiaozhiMicAfterTts: ensure mic (không restart nếu đang chạy)")
+                LogUtils.i(TAG, "resumeXiaozhiMicAfterTts: giữ WS, start directRecord (hey mini KWS vẫn chạy)")
                 (recognizer as? DemoRecognizer)?.startRecognizingAfterTtsReconnect()
             } catch (e: Exception) {
                 LogUtils.e(TAG, "resumeXiaozhiMicAfterTts error: $e", e)
@@ -1146,17 +1020,14 @@ object DemoSpeech : SpeechModuleFactory() {
     }
 
     /**
-     * Chạm đầu:
-     * - 1 lần → wake (giống hey mini)
-     * - 2 lần liên tục → hiện IP Wi‑Fi trên mắt (máy gốc)
-     * Logcat: HeadTouchEvent → onSingleClick / onDoubleClick
+     * Chạm đầu 1 lần — {@link HeadTouchEventHelper} (SysEventApi + HeadEvent, giống mini-outer-sdk-demo).
+     * Logcat filter: HeadTouchEvent → "HeadEvent=======onSingleClick"
      */
     private fun setupHeadTouchTrigger(hostService: MasterSystemService, service: MasterSystemService) {
         try {
             HeadTouchEventHelper.subscribe(object : HeadTouchEventHelper.OnHeadTapListener {
                 override fun onHeadTapDownInterrupt() {
                     if (ActivationEyeDisplay.isQrShowing()) return
-                    // Ngắt loa NGAY khi chạm — không chờ 450ms phân single/double.
                     try {
                         xiaozhiSessionRef?.forceStopPlaybackForHeyMini()
                             ?: (recognizer as? DemoRecognizer)?.forceStopForHeyMini()
@@ -1164,27 +1035,14 @@ object DemoSpeech : SpeechModuleFactory() {
                         LogUtils.w(TAG, "head interrupt: ${e.message}")
                     }
                 }
-
                 override fun onHeadSingleTap(event: com.ubtrobot.mini.sysevent.event.base.KeyEvent?) {
-                    // Không chặn wake vì QR — double-tap suppress chỉ ~1.6s trong HeadTouchEventHelper.
-                    playWakeTingNow("head-tap wake")
-                    Thread({
-                        if (recognizer == null || xiaozhiSessionRef == null) {
-                            pendingHeadWake = true
-                            LogUtils.i(TAG, "[Head] speech chưa sẵn sàng – đã ting, xếp wake khi init xong")
-                            return@Thread
-                        }
-                        // Kênh đóng: phải mở WS (log hay thấy “kênh chưa mở”).
-                        LogUtils.i(
-                            TAG,
-                            "[Head] wake channelOpen=${xiaozhiSessionRef?.isAudioChannelOpened()}"
-                        )
-                        handleManualWake(hostService, service, fromHeadTouch = true, playTing = false)
-                    }, "HeadWake").start()
+                    // Giống 2b23f8d: chỉ handleManualWake (ting trong handleWakeup).
+                    ThreadPool.runOnNonUIThread {
+                        handleManualWake(hostService, service, fromHeadTouch = true)
+                    }
                 }
-
                 override fun onHeadDoubleTap(event: com.ubtrobot.mini.sysevent.event.base.KeyEvent?) {
-                    LogUtils.i(TAG, "[Head] double-tap → toggle QR")
+                    LogUtils.i(TAG, "[Head] double-tap → QR Wi-Fi / Self-Control")
                     try {
                         com.ubtrobot.mini.speech.framework.demo.wificonfig.WifiProvisionController
                             .onHeadDoubleTap(appContext)
@@ -1193,32 +1051,10 @@ object DemoSpeech : SpeechModuleFactory() {
                     }
                 }
             })
-            LogUtils.i(TAG, "Head-touch: single=wake, double=IP hoặc SoftAP QR")
+            LogUtils.i(TAG, "Head-touch: single=wake(2b23), double=QR")
         } catch (e: Exception) {
             LogUtils.w(TAG, "Head-touch subscribe failed: ${e.message}", e)
         }
-    }
-
-    private fun playWakeTingNow(reason: String) {
-        // Giống 2b23f8d: WakeupAudioPlayer.play() (off-main để tránh ANR AudioPolicy).
-        Thread({
-            try {
-                WakeupAudioPlayer.get(appContext).play()
-                LogUtils.i(TAG, "[WakeWord] ting – $reason")
-            } catch (e: Exception) {
-                LogUtils.w(TAG, "ting wake: ${e.message}")
-            }
-        }, "WakeTing").start()
-    }
-
-    private fun flushPendingHeadWake(hostService: MasterSystemService, service: MasterSystemService) {
-        if (!pendingHeadWake) return
-        if (recognizer == null || xiaozhiSessionRef == null) return
-        pendingHeadWake = false
-        LogUtils.i(TAG, "[Head] flush pending wake (init vừa xong)")
-        Thread({
-            handleManualWake(hostService, service, fromHeadTouch = true, playTing = false)
-        }, "HeadWakeFlush").start()
     }
 
     /** Create a minimal WakeUp for ACTION_WAKE_UP when Porcupine/head-touch passes null. */
@@ -1238,29 +1074,26 @@ object DemoSpeech : SpeechModuleFactory() {
         }
     }
 
-  /** Chạm đầu hoặc hey mini — forceReconnect chỉ khi chạm đầu (đúng 2b23f8d). */
+  /** Chạm đầu hoặc hey mini (KWS): mở WS mới; head touch không bị debounce KWS suppress. */
   private fun handleManualWake(
       hostService: MasterSystemService,
       service: MasterSystemService,
-      fromHeadTouch: Boolean,
-      playTing: Boolean = true
+      fromHeadTouch: Boolean
   ) {
     if (fromHeadTouch) {
       wakeUpDetectorRef?.lastDetectedKeyword = "HEY MINI"
     }
-    handleWakeup(hostService, null, service, forceReconnect = fromHeadTouch, playTing = playTing)
+    handleWakeup(hostService, null, service, forceReconnect = fromHeadTouch)
   }
 
     private fun handleWakeup(hostService: MasterSystemService,
             wakeUp: WakeUp?,
             service: MasterSystemService,
-            forceReconnect: Boolean = false,
-            playTing: Boolean = true) {
+            forceReconnect: Boolean = false) {
         val kw = wakeUpDetectorRef?.lastDetectedKeyword?.takeIf { it.isNotBlank() } ?: "wake word"
         lastWakeAtMs = System.currentTimeMillis()
         LogUtils.i(TAG, "[WakeWord] handleWakeup – detected \"$kw\", force dừng phát + publish + start recognition")
-        // Thứ tự 2b23f8d: ting trước → suppress → forceStop → publish → startRecognition.
-        if (playTing && xiaozhiSessionRef != null) {
+        if (xiaozhiSessionRef != null) {
             try {
                 WakeupAudioPlayer.get(appContext).play()
                 LogUtils.i(TAG, "[WakeWord] ting – đánh thức OK (ngay khi wake)")
@@ -1276,6 +1109,7 @@ object DemoSpeech : SpeechModuleFactory() {
                 ServiceConstants.ACTION_SPEECH_WAKEUP,
                 ProtoParam.create(
                         WakeupParam.newBuilder().build()))
+        // After wake-up, publish so framework starts voice recognition (STT). Porcupine passes null → use dummy WakeUp.
         val wakeUpForPublish = wakeUp ?: createDummyWakeUp()
         if (wakeUpForPublish != null) {
             hostService.publishCarefully(SpeechConstants.ACTION_WAKE_UP,
@@ -1284,17 +1118,43 @@ object DemoSpeech : SpeechModuleFactory() {
         } else {
             LogUtils.e(TAG, "ACTION_WAKE_UP NOT published (dummy WakeUp failed), recognizer may not start.")
         }
-        LogUtils.i(TAG, "[WakeWord] startRecognitionAfterWakeup → onWake")
-        (recognizer as? DemoRecognizer)?.startRecognitionAfterWakeup(forceReconnect)
+        LogUtils.i(TAG, "[WakeWord] startRecognitionAfterWakeup → onWake (chờ bootstrap, không reconnect MQTT trùng)")
+        (recognizer as? DemoRecognizer)?.startRecognitionAfterWakeup(false)
 
-        if (playTing && xiaozhiSessionRef == null) {
-            try {
-                WakeupAudioPlayer.get(appContext).play()
-                LogUtils.i(TAG, "[WakeWord] ting – đánh thức (không Xiaozhi)")
-            } catch (e: Exception) {
-                LogUtils.w(TAG, "ting wake: ${e.message}")
-            }
+//        val o: RecognitionOption = RecognitionOption.Builder(
+//                RecognitionOption.MODE_SINGLE).setUnderstandingOption(
+//                Builder().setSessionId(
+//                        UUID.randomUUID().toString()).build()).build()
+//        val callAdapter = ParcelableSessionCallAdapter2(
+//                service, "speech",
+//                service.openCompetitionSession().addCompeting {
+//                    listOf(CompetingItem("speech", "recognizer"))
+//                })
+//        val promise: ProgressivePromise<RecognitionResult, RecognitionException, RecognitionProgress> = callAdapter.callStickily(
+//                "/speech/recognize", o,
+//                RecognitionResult::class.java,
+//                RecognitionProgress::class.java
+//        ) { e ->
+//            RecognitionException(
+//                    CallExceptionTranslator2.translate(e), e.subCode,
+//                    e.message)
+//        }
+//        promise.done {
+//            //处理成功结果
+//        }
+//        promise.fail {
+//            //处理失败结果
+//        }
+//        promise.progress {
+//            //处理中间结果
+//        }
+
+        // Xiaozhi: ting wake ngay (performFullWakeReconnect) + ting mic sau chào. Không Xiaozhi: ting tại đây.
+        if (xiaozhiSessionRef == null) {
+            WakeupAudioPlayer.get(appContext).play()
+            LogUtils.i(TAG, "[WakeWord] ting – đánh thức (không Xiaozhi)")
         }
+        //clear motor protected flag
         ThreadPool.runOnNonUIThread {
             MotorApi.get().clearProtectFlag(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
                     14)

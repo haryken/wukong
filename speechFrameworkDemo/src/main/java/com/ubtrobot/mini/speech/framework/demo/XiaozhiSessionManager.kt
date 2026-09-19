@@ -5,7 +5,7 @@ import android.util.Log
 
 /**
  * Facade Xiaozhi — delegate WebSocket hoặc MQTT tùy [XiaozhiTransportPreference].
- * Logic WebSocket: [XiaozhiWebSocketSessionManager] (= commit 2b23f8d).
+ * Logic WebSocket: [XiaozhiWebSocketSessionManager]. Logic MQTT: [XiaozhiMqttSessionManager].
  */
 class XiaozhiSessionManager private constructor(
     private val delegate: XiaozhiSessionApi
@@ -21,9 +21,14 @@ class XiaozhiSessionManager private constructor(
         const val FRAME_MS = XiaozhiWebSocketSessionManager.FRAME_MS
         const val PCM_GAIN_CONCENTUS = XiaozhiWebSocketSessionManager.PCM_GAIN_CONCENTUS
 
+        @Volatile
+        private var suppressServerPcmForSkillUntilMs = 0L
+        @Volatile
+        private var refreshSessionAfterNextTtsStop = false
+
         @JvmStatic
         fun noteRobotSkillPcmSuppress(durationMs: Long, reason: String) {
-            // Ủy quyền sang WS companion (pcmBlockReason đọc flag ở đó).
+            // Flag phải nằm trên companion WS (pcmBlockReason đọc tại đây).
             XiaozhiWebSocketSessionManager.noteRobotSkillPcmSuppress(durationMs, reason)
         }
 
