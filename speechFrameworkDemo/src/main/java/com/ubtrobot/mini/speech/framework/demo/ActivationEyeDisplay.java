@@ -1511,7 +1511,7 @@ public class ActivationEyeDisplay {
   }
 
   private static void notifyUi(String text) {
-    CodeDisplayListener list  ener = uiListener;
+    CodeDisplayListener listener = uiListener;
     if (listener != null) {
       listener.onCodeReceived(text);
     }

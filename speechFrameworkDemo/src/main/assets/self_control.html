@@ -81,6 +81,7 @@
             <button type="button" class="bot-nav-item" data-section="bot-voice" onclick="showBotSection('bot-voice')"><span class="bot-ico">🗣️</span><span data-i18n="bot.voice">Giọng</span></button>
             <button type="button" class="bot-nav-item" data-section="bot-unit" onclick="showBotSection('bot-unit')"><span class="bot-ico">📖</span><span data-i18n="bot.unit">Unit</span></button>
             <button type="button" class="bot-nav-item" data-section="bot-music" onclick="showBotSection('bot-music')"><span class="bot-ico">🎵</span><span data-i18n="bot.music">Server nhạc</span></button>
+            <button type="button" class="bot-nav-item" data-section="bot-wake" onclick="showBotSection('bot-wake'); loadWakeEngine()"><span class="bot-ico">🎙️</span><span>Đánh thức</span></button>
         </div>
         <hr class="smallhr">
 
@@ -134,6 +135,62 @@
             <input type="text" id="music_server_url" placeholder="https://youtube.kytuoi.com" autocomplete="off" spellcheck="false">
             <button type="button" class="btn btn-settings-save" id="btn_save_music" onclick="saveMusicServer()">💾 Lưu server nhạc</button>
             <button type="button" class="btn btn-dismiss-qr" style="margin-top:8px" onclick="resetMusicServer()">↺ Về mặc định</button>
+        </div>
+
+        <div id="bot-wake" class="bot-section">
+            <h3>🎙️ <span>Đánh thức</span></h3>
+            <div class="help-box"><strong data-i18n="common.howto">Cách dùng</strong><ol>
+                <li>Chọn engine rồi bấm Lưu — đổi ngay, không cần khởi động lại robot.</li>
+                <li>Sherpa-ONNX: offline, miễn phí. Bấm "➕ Thêm từ đánh thức" để thêm từng cụm tiếng Anh (vd. hey robot); thêm / xoá được áp dụng ngay.</li>
+                <li>Porcupine: cần AccessKey ở console.picovoice.ai, robot cần Internet; gói free giới hạn số thiết bị. Từ đánh thức cố định "Hey Mini".</li>
+                <li>Độ nhạy cao = dễ nghe thấy hơn nhưng dễ tự đánh thức nhầm.</li>
+                <li>Porcupine lỗi (sai key / hết quota / mất mạng) → robot tự quay về Sherpa.</li>
+            </ol></div>
+            <div class="live-status" id="wake_runtime">Đang tải…</div>
+
+            <label for="wake_engine">Engine</label>
+            <select id="wake_engine" class="wake-select" onchange="wakeEngineSyncUI()">
+                <option value="sherpa">Sherpa-ONNX (offline)</option>
+                <option value="porcupine">Picovoice Porcupine</option>
+            </select>
+
+            <div id="wake_sherpa_box">
+                <label>Từ đánh thức (tối đa 8)</label>
+                <div class="wake-kw-list" id="wake_kw_list"></div>
+                <button type="button" class="btn wake-kw-add-btn" id="wake_kw_add_btn" onclick="wakeKwShowAdd(true)">➕ Thêm từ đánh thức</button>
+                <div class="wake-kw-add" id="wake_kw_add_box" style="display:none">
+                    <input type="text" id="wake_kw_input" class="wake-key" maxlength="40" placeholder="vd. hey robot" autocomplete="off" spellcheck="false"
+                           onkeydown="if (event.key === 'Enter') { event.preventDefault(); wakeKwAdd(); } else if (event.key === 'Escape') wakeKwShowAdd(false);">
+                    <div class="wake-kw-add-actions">
+                        <button type="button" class="btn btn-save" id="wake_kw_add_confirm" onclick="wakeKwAdd()">Thêm</button>
+                        <button type="button" class="btn wake-btn-cancel" onclick="wakeKwShowAdd(false)">Huỷ</button>
+                    </div>
+                    <p class="mac-hint">Chỉ chữ tiếng Anh không dấu, tối đa 4 từ. Nên dùng cụm 2–3 âm tiết ít gặp khi nói chuyện.</p>
+                </div>
+                <label for="wake_sherpa_sens">Độ nhạy Sherpa: <span id="wake_sherpa_sens_val">50%</span></label>
+                <input type="range" id="wake_sherpa_sens" class="wake-range" min="0" max="100" step="5" value="50" oninput="wakeSensLabel('wake_sherpa_sens')">
+            </div>
+
+            <div id="wake_porcupine_box" style="display:none">
+                <label for="wake_pv_key">Picovoice AccessKey</label>
+                <input type="password" id="wake_pv_key" class="wake-key" placeholder="Dán AccessKey (bỏ trống = giữ key cũ)" autocomplete="off" spellcheck="false">
+                <p class="mac-hint" id="wake_pv_key_hint">Chưa có key.</p>
+                <label for="wake_pv_sens">Độ nhạy Porcupine: <span id="wake_pv_sens_val">50%</span></label>
+                <input type="range" id="wake_pv_sens" class="wake-range" min="0" max="100" step="5" value="50" oninput="wakeSensLabel('wake_pv_sens')">
+                <button type="button" class="btn btn-dismiss-qr" style="margin-top:8px" onclick="clearWakeKey()">🗑️ Xoá AccessKey</button>
+            </div>
+
+            <button type="button" class="btn btn-settings-save" id="btn_save_wake" onclick="saveWakeEngine()">💾 Lưu engine / độ nhạy</button>
+        </div>
+
+        <div class="sc-confirm" id="sc_confirm" hidden>
+            <div class="sc-confirm-box" role="dialog" aria-modal="true" aria-labelledby="sc_confirm_msg">
+                <p id="sc_confirm_msg"></p>
+                <div class="sc-confirm-actions">
+                    <button type="button" class="btn wake-btn-cancel" id="sc_confirm_cancel">Huỷ</button>
+                    <button type="button" class="btn btn-stop" id="sc_confirm_ok">Xoá</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -914,6 +971,194 @@
         function resetMusicServer() {
             document.getElementById('music_server_url').value = DEFAULT_MUSIC_SERVER;
             saveMusicServer();
+        }
+
+        // Server đọc body theo số ký tự = Content-Length (byte) → body phải thuần ASCII.
+        function wakeAsciiJSON(obj) {
+            return JSON.stringify(obj).replace(/[\u007f-\uffff]/g,
+                c => '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4));
+        }
+
+        function wakeSensLabel(id) {
+            const el = document.getElementById(id);
+            const lb = document.getElementById(id + '_val');
+            if (el && lb) lb.textContent = el.value + '%';
+        }
+
+        function wakeEngineSyncUI() {
+            const pv = document.getElementById('wake_engine').value === 'porcupine';
+            document.getElementById('wake_sherpa_box').style.display = pv ? 'none' : '';
+            document.getElementById('wake_porcupine_box').style.display = pv ? '' : 'none';
+        }
+
+        function wakeRenderStatus(d) {
+            const rt = d.runtime || {};
+            const names = { sherpa: 'Sherpa-ONNX', porcupine: 'Porcupine' };
+            let txt = rt.active
+                ? 'Đang chạy: ' + (names[rt.active] || rt.active) + (rt.ready ? ' ✅ sẵn sàng' : ' ⏳ đang khởi động')
+                : 'Engine chưa khởi động (robot đang init)';
+            if (rt.fallback_reason) txt += ' — Porcupine lỗi, dùng tạm Sherpa: ' + rt.fallback_reason;
+            else if (rt.error) txt += ' — lỗi: ' + rt.error;
+            if (rt.last_keyword) txt += ' · lần cuối nghe: "' + rt.last_keyword + '"';
+            document.getElementById('wake_runtime').textContent = txt;
+            document.getElementById('wake_pv_key_hint').textContent = d.porcupine_has_key
+                ? 'Đã lưu key: ' + d.porcupine_key_masked + ' (bỏ trống ô trên = giữ key này)'
+                : 'Chưa có key.';
+        }
+
+        const WAKE_KW_MAX = 8;
+        let wakeKeywords = [];
+        let wakeBusy = false;
+
+        function wakeEscapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        function wakeKwRender() {
+            const list = document.getElementById('wake_kw_list');
+            if (!wakeKeywords.length) {
+                list.innerHTML = '<div class="try-empty">Chưa có từ đánh thức</div>';
+            } else {
+                list.innerHTML = wakeKeywords.map((kw, i) =>
+                    '<div class="wake-kw-item"><span class="wake-kw-text">' + wakeEscapeHtml(kw.toLowerCase()) + '</span>'
+                    + '<button type="button" class="wake-kw-del" title="Xoá" aria-label="Xoá ' + wakeEscapeHtml(kw.toLowerCase()) + '"'
+                    + ' onclick="wakeKwDelete(' + i + ')"' + (wakeKeywords.length <= 1 ? ' disabled' : '') + '>🗑️</button></div>'
+                ).join('');
+            }
+            const full = wakeKeywords.length >= WAKE_KW_MAX;
+            const addBtn = document.getElementById('wake_kw_add_btn');
+            addBtn.disabled = full;
+            addBtn.textContent = full ? 'Đã đủ ' + WAKE_KW_MAX + ' từ đánh thức' : '➕ Thêm từ đánh thức';
+            if (full) wakeKwShowAdd(false);
+        }
+
+        function wakeKwShowAdd(show) {
+            const box = document.getElementById('wake_kw_add_box');
+            const input = document.getElementById('wake_kw_input');
+            box.style.display = show ? '' : 'none';
+            document.getElementById('wake_kw_add_btn').style.display = show ? 'none' : '';
+            input.value = '';
+            if (show) input.focus();
+        }
+
+        async function wakeKwAdd() {
+            const input = document.getElementById('wake_kw_input');
+            const phrase = input.value.trim().replace(/\s+/g, ' ');
+            if (!phrase) { showToast('Nhập từ đánh thức trước'); input.focus(); return; }
+            if (!/^[a-zA-Z' ]+$/.test(phrase)) { showToast('❌ Chỉ dùng chữ tiếng Anh không dấu (A-Z)'); input.focus(); return; }
+            if (phrase.split(' ').length > 4) { showToast('❌ Tối đa 4 từ'); input.focus(); return; }
+            if (wakeKeywords.some(k => k.toUpperCase() === phrase.toUpperCase())) {
+                showToast('"' + phrase.toLowerCase() + '" đã có trong danh sách'); input.focus(); return;
+            }
+            const d = await postWakeEngine({ sherpa_keywords: wakeKeywords.concat([phrase]) },
+                '✅ Đã thêm "' + phrase.toLowerCase() + '"');
+            if (d) wakeKwShowAdd(false);
+        }
+
+        async function wakeKwDelete(i) {
+            const kw = wakeKeywords[i];
+            if (kw == null || wakeKeywords.length <= 1) return;
+            const ok = await scConfirm('Xoá từ đánh thức "' + kw.toLowerCase() + '"?\nRobot sẽ không thức dậy khi nghe cụm này nữa.', 'Xoá');
+            if (!ok) return;
+            await postWakeEngine({ sherpa_keywords: wakeKeywords.filter((_, j) => j !== i) },
+                '🗑️ Đã xoá "' + kw.toLowerCase() + '"');
+        }
+
+        function scConfirm(message, okLabel) {
+            return new Promise(resolve => {
+                const wrap = document.getElementById('sc_confirm');
+                const okBtn = document.getElementById('sc_confirm_ok');
+                const cancelBtn = document.getElementById('sc_confirm_cancel');
+                document.getElementById('sc_confirm_msg').textContent = message;
+                okBtn.textContent = okLabel || 'OK';
+                const done = (result) => {
+                    wrap.hidden = true;
+                    okBtn.onclick = cancelBtn.onclick = wrap.onclick = null;
+                    document.removeEventListener('keydown', onKey);
+                    resolve(result);
+                };
+                const onKey = (e) => { if (e.key === 'Escape') done(false); };
+                okBtn.onclick = () => done(true);
+                cancelBtn.onclick = () => done(false);
+                wrap.onclick = (e) => { if (e.target === wrap) done(false); };
+                document.addEventListener('keydown', onKey);
+                wrap.hidden = false;
+                cancelBtn.focus();
+            });
+        }
+
+        let wakeStatusTimer = null;
+        async function loadWakeEngine(keepInputs) {
+            try {
+                const d = await (await fetch('/api/wake_engine')).json();
+                wakeKeywords = d.sherpa_keywords || [];
+                wakeKwRender();
+                if (!keepInputs) {
+                    document.getElementById('wake_engine').value = d.engine || 'sherpa';
+                    document.getElementById('wake_sherpa_sens').value =
+                        Math.round((d.sherpa_sensitivity != null ? d.sherpa_sensitivity : 0.5) * 100);
+                    document.getElementById('wake_pv_sens').value =
+                        Math.round((d.porcupine_sensitivity != null ? d.porcupine_sensitivity : 0.5) * 100);
+                    document.getElementById('wake_pv_key').value = '';
+                    wakeSensLabel('wake_sherpa_sens');
+                    wakeSensLabel('wake_pv_sens');
+                    wakeEngineSyncUI();
+                }
+                wakeRenderStatus(d);
+                clearTimeout(wakeStatusTimer);
+                const sec = document.getElementById('bot-wake');
+                if (sec && sec.classList.contains('open') && !(d.runtime && d.runtime.ready)) {
+                    wakeStatusTimer = setTimeout(() => loadWakeEngine(true), 1500);
+                }
+            } catch (err) {
+                document.getElementById('wake_runtime').textContent = 'Lỗi tải: ' + err.message;
+            }
+        }
+
+        /** POST cấu hình; thành công → trả status mới (đã cập nhật danh sách), lỗi → null. */
+        async function postWakeEngine(payload, okMsg, resetInputs) {
+            if (wakeBusy) return null;
+            wakeBusy = true;
+            const btns = ['btn_save_wake', 'wake_kw_add_confirm'].map(id => document.getElementById(id));
+            btns.forEach(b => { if (b) b.disabled = true; });
+            let result = null;
+            try {
+                const resp = await fetch('/api/wake_engine', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: wakeAsciiJSON(payload)
+                });
+                const d = await resp.json();
+                if (!resp.ok || !d.success) {
+                    showToast('❌ ' + (d.error || 'Lưu thất bại'));
+                } else {
+                    showToast(okMsg);
+                    result = d;
+                }
+            } catch (err) {
+                showToast('Lỗi: ' + err.message);
+            }
+            btns.forEach(b => { if (b) b.disabled = false; });
+            wakeBusy = false;
+            if (result) await loadWakeEngine(!resetInputs);
+            return result;
+        }
+
+        function saveWakeEngine() {
+            const payload = {
+                engine: document.getElementById('wake_engine').value,
+                sherpa_sensitivity: Number(document.getElementById('wake_sherpa_sens').value) / 100,
+                porcupine_sensitivity: Number(document.getElementById('wake_pv_sens').value) / 100
+            };
+            const key = document.getElementById('wake_pv_key').value.trim();
+            if (key) payload.porcupine_access_key = key;
+            postWakeEngine(payload, '✅ Đã lưu engine / độ nhạy', true);
+        }
+
+        async function clearWakeKey() {
+            const ok = await scConfirm('Xoá AccessKey Picovoice trên robot?\nRobot sẽ chuyển về Sherpa.', 'Xoá');
+            if (!ok) return;
+            postWakeEngine({ engine: 'sherpa', porcupine_clear_key: true }, '🗑️ Đã xoá AccessKey', true);
         }
         const COURSES = {
             0: { name: 'Tự cấu hình', units: [], subs: [] },

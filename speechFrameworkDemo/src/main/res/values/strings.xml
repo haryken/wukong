@@ -12,6 +12,4 @@
   <string name="transport_mqtt_not_ready">Chưa có MQTT config — đợi OTA hoặc chọn WebSocket.</string>
   <string name="transport_applied">Đã áp dụng: %1$s</string>
   <string name="app_id">5d7f6355</string>
-  <!-- Picovoice AccessKey from https://console.picovoice.ai/ (free tier) -->
-  <string name="picovoice_access_key">HThfMXjMFYU3qIRhLgkeckw7N0jWJfamZlEEVo8VQu5ZPYygQ9ksJg==</string>
 </resources>

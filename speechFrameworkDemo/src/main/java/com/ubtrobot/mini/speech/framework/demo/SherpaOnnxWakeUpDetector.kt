@@ -9,18 +9,14 @@ import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.ubtech.utilcode.utils.LogUtils
-import com.ubtrobot.speech.AbstractWakeUpDetector
-import com.ubtrobot.speech.WakeUp
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Sherpa-onnx keyword spotting for "hey mini".
+ * Sherpa-onnx keyword spotting (mặc định "hey mini" / "hi mini", đổi được qua [configure]).
  * All native calls run on a single [SherpaKwsWorker] thread (required by ONNX).
  */
-class SherpaOnnxWakeUpDetector(private val context: Context) :
-    AbstractWakeUpDetector(),
-    WakeWordPcmFeeder {
+class SherpaOnnxWakeUpDetector(private val context: Context) : WakeEngine {
 
   companion object {
     private const val TAG = "SherpaOnnxWakeUp"
@@ -30,11 +26,11 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
     private const val CHUNK_SAMPLES = 1600
     private const val COOLDOWN_MS = 2000L
     /**
-     * Tune sensitivity here — keywords.txt is tokens only (no :score / #threshold).
      * score ↑ / threshold ↓ = dễ bắt hơn. Quá thấp (vd. 0.08) trên Alpha Mini có thể không wake.
+     * Threshold thực tế lấy từ độ nhạy web qua [thresholdForSensitivity].
      */
     private const val KEYWORDS_SCORE = 2.0f
-    private const val KEYWORDS_THRESHOLD = 0.12f
+    private const val DEFAULT_SENSITIVITY = 0.5f
     private const val MAX_ACTIVE_PATHS = 4
     /**
      * Khi phát nhạc local: chỉ decode 1/N chunk (vẫn feed waveform đủ để stream không lệch).
@@ -42,15 +38,28 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
      */
     private const val MUSIC_DECODE_EVERY_N = 2
 
-    /** Chỉ publish wake cho hey mini / hi mini — keywords.txt có thêm HEY SIRI để test nhưng không dùng làm wake. */
-    private fun isHeyMiniKeyword(normalizedUpper: String): Boolean {
-      return (normalizedUpper.contains("HEY") && normalizedUpper.contains("MINI"))
-          || (normalizedUpper.contains("HI") && normalizedUpper.contains("MINI"))
-    }
+    val DEFAULT_PHRASES = listOf("HEY MINI", "HI MINI")
+
+    /** Độ nhạy 0..1 → threshold 0.20..0.04 (0.5 → 0.12 như trước). */
+    fun thresholdForSensitivity(s: Float): Float = (0.20f - 0.16f * s.coerceIn(0f, 1f))
+
+    /** "HEY_MINI" / "▁HEY▁MINI" / "▁HE Y ▁MIN I" / "HEY MINI" → "HEYMINI" (khoá so khớp). */
+    private fun compactKey(keyword: String): String =
+      keyword.uppercase().replace(Regex("[\\s_\u2581]+"), "")
   }
 
+  override val engineId: String = SwitchableWakeUpDetector.ENGINE_SHERPA
+
   /** Last phrase matched by KWS – for logs / server wake hint. */
-  @Volatile var lastDetectedKeyword: String = ""
+  @Volatile override var lastDetectedKeyword: String = ""
+  @Volatile override var onDetected: ((String) -> Unit)? = null
+  @Volatile override var onFatalError: ((String) -> Unit)? = null
+  @Volatile private var errorText: String = ""
+  override val lastError: String get() = errorText
+
+  /** Cụm được phép wake (đã normalize) – keywords.txt có thêm HEY SIRI... nhưng chỉ publish cụm trong list này. */
+  @Volatile private var phrases: List<String> = DEFAULT_PHRASES
+  @Volatile private var sensitivity: Float = DEFAULT_SENSITIVITY
 
   private sealed class WorkerCmd {
     object Init : WorkerCmd()
@@ -78,6 +87,7 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
     var pcmFill = 0
     var lastWakeMs = 0L
     var musicDecodeCounter = 0
+    var activePhrases: Map<String, String> = DEFAULT_PHRASES.associateBy { compactKey(it) }
 
     fun releaseNative() {
       try {
@@ -96,21 +106,27 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
 
     fun initNative() {
       releaseNative()
-      val config = buildConfig()
+      val wanted = phrases
+      val threshold = thresholdForSensitivity(sensitivity)
+      val config = buildConfig(threshold)
       val spotter = KeywordSpotter(context.assets, config)
-      // Use keywords from assets/sherpa-kws/keywords.txt (config.keywordsFile).
-      val st = spotter.createStream()
+      // Cụm trên web được thêm vào stream (gộp với keywords.txt); "@HEY_MINI" = tên trả về trong result.keyword.
+      val streamKeywords = buildStreamKeywords(wanted)
+      val st = spotter.createStream(streamKeywords)
       if (st.ptr == 0L) {
         spotter.release()
-        LogUtils.e(TAG, "[WakeWord] createStream failed – check keywords.txt / model files")
+        errorText = "createStream lỗi – kiểm tra từ khoá / model sherpa-kws"
+        LogUtils.e(TAG, "[WakeWord] createStream failed – keywords=\"$streamKeywords\"")
         return
       }
       kws = spotter
       stream = st
+      activePhrases = wanted.associateBy { compactKey(it) }
+      errorText = ""
       streamReady.set(true)
       LogUtils.i(
         TAG,
-        "[WakeWord] KeywordSpotter ready – score=$KEYWORDS_SCORE threshold=$KEYWORDS_THRESHOLD " +
+        "[WakeWord] KeywordSpotter ready – phrases=$wanted score=$KEYWORDS_SCORE threshold=$threshold " +
           "maxActivePaths=$MAX_ACTIVE_PATHS (chunk-16, feed $CHUNK_SAMPLES samples)"
       )
     }
@@ -167,9 +183,9 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
           if (keyword.isNotBlank()) {
             val now = System.currentTimeMillis()
             if (now < suppressWakeUntilMs) continue
-            val normalized = keyword.trim().uppercase().replace(Regex("\\s+"), " ")
-            if (!isHeyMiniKeyword(normalized)) {
-              LogUtils.d(TAG, "[WakeWord] bỏ qua keyword không phải hey mini: $normalized")
+            val normalized = activePhrases[compactKey(keyword)]
+            if (normalized == null) {
+              LogUtils.d(TAG, "[WakeWord] bỏ qua keyword không nằm trong danh sách wake: $keyword")
               spotter.reset(st)
               continue
             }
@@ -178,7 +194,7 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
               lastDetectedKeyword = normalized
               LogUtils.i(TAG, "[WakeWord] detected: $lastDetectedKeyword")
               spotter.reset(st)
-              notifyWakeUp(null)
+              onDetected?.invoke(normalized)
             }
           }
         }
@@ -193,6 +209,7 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
             initNative()
           } catch (e: Exception) {
             LogUtils.e(TAG, "[WakeWord] init failed: ${e.message}", e)
+            errorText = "init lỗi: ${e.message}"
             releaseNative()
           }
         }
@@ -206,7 +223,24 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
     }
   }, "SherpaKwsWorker")
 
-  fun start() {
+  /**
+   * Đổi cụm wake (đã normalize, đã kiểm tra tách token được) + độ nhạy 0..1.
+   * Đang chạy thì dựng lại KeywordSpotter trên worker (mic vẫn chạy, chỉ mất vài trăm ms KWS).
+   */
+  fun configure(newPhrases: List<String>, newSensitivity: Float) {
+    val p = newPhrases.ifEmpty { DEFAULT_PHRASES }
+    val s = newSensitivity.coerceIn(0f, 1f)
+    if (p == phrases && s == sensitivity) return
+    phrases = p
+    sensitivity = s
+    LogUtils.i(TAG, "[WakeWord] configure phrases=$p sensitivity=$s")
+    if (wantRunning) {
+      streamReady.set(false)
+      cmdQueue.offer(WorkerCmd.Init)
+    }
+  }
+
+  override fun start() {
     if (wantRunning) {
       LogUtils.d(TAG, "[WakeWord] start ignored – already active")
       return
@@ -217,7 +251,7 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
     LogUtils.i(TAG, "[WakeWord] start requested – mic may feed after KeywordSpotter ready")
   }
 
-  fun stop() {
+  override fun stop() {
     if (!wantRunning) return
     wantRunning = false
     streamReady.set(false)
@@ -226,19 +260,19 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
   }
 
   /** Gọi khi TTS bắt đầu – giảm false wake từ loa robot (echo). */
-  fun suppressWakeFor(ms: Long) {
+  override fun suppressWakeFor(ms: Long) {
     suppressWakeUntilMs = System.currentTimeMillis() + ms
     LogUtils.d(TAG, "[WakeWord] suppressWakeFor ${ms}ms")
   }
 
   /** Sau ting / lỗi greeting – cho phép hey mini ngay (bỏ suppress từ TTS chào). */
-  fun clearSuppressWake() {
+  override fun clearSuppressWake() {
     suppressWakeUntilMs = 0L
     LogUtils.d(TAG, "[WakeWord] clearSuppressWake")
   }
 
   /** True when stream exists and PCM will be decoded (safe to start mic). */
-  fun isStreamReady(): Boolean = streamReady.get()
+  override fun isStreamReady(): Boolean = streamReady.get()
 
   override fun feedPcmFrame(frame: ByteArray) {
     if (!wantRunning || !streamReady.get() || frame.isEmpty()) return
@@ -272,7 +306,21 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
     }
   }
 
-  private fun buildConfig(): KeywordSpotterConfig {
+  /** ["HEY MINI","HI MINI"] → "▁HE Y ▁MIN I @HEY_MINI/▁HI ▁MIN I @HI_MINI". */
+  private fun buildStreamKeywords(list: List<String>): String {
+    val tokenizer = SherpaKwsTokenizer.get(context)
+    return list.mapNotNull { phrase ->
+      val tokens = tokenizer.encodePhrase(phrase)
+      if (tokens == null) {
+        LogUtils.w(TAG, "[WakeWord] bỏ cụm không tách token được: $phrase")
+        null
+      } else {
+        "$tokens @${phrase.replace(' ', '_')}"
+      }
+    }.joinToString("/")
+  }
+
+  private fun buildConfig(keywordsThreshold: Float): KeywordSpotterConfig {
     val transducer = OnlineTransducerModelConfig(
       encoder = "$ASSET_DIR/encoder-epoch-12-avg-2-chunk-16-left-64.onnx",
       decoder = "$ASSET_DIR/decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
@@ -298,28 +346,8 @@ class SherpaOnnxWakeUpDetector(private val context: Context) :
       maxActivePaths = MAX_ACTIVE_PATHS,
       keywordsFile = "$ASSET_DIR/keywords.txt",
       keywordsScore = KEYWORDS_SCORE,
-      keywordsThreshold = KEYWORDS_THRESHOLD,
+      keywordsThreshold = keywordsThreshold,
       numTrailingBlanks = 1
     )
-  }
-
-  /**
-   * Block until [streamReady] or timeout. Call from background thread before starting mic.
-   */
-  fun waitUntilReady(timeoutMs: Long = 15_000L): Boolean {
-    ensureWorker()
-    if (streamReady.get()) return true
-    if (!wantRunning) start()
-    val deadline = System.currentTimeMillis() + timeoutMs
-    while (System.currentTimeMillis() < deadline) {
-      if (streamReady.get()) return true
-      try {
-        Thread.sleep(50)
-      } catch (_: InterruptedException) {
-        return false
-      }
-    }
-    LogUtils.e(TAG, "[WakeWord] waitUntilReady timeout (${timeoutMs}ms)")
-    return streamReady.get()
   }
 }

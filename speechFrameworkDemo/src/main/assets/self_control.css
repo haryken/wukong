@@ -196,6 +196,41 @@ input[type="text"], input[type="search"] {
   font-size: 1em; background: #151515; color: #fff;
 }
 input[type="radio"] { margin-right: 8px; }
+.wake-select, .wake-key {
+  width: 100%; padding: 12px; border: 1px solid #555; border-radius: 10px;
+  font-size: 1em; background: #151515; color: #fff; box-sizing: border-box;
+}
+.wake-range { width: 100%; margin: 4px 0 10px; }
+#wake_sherpa_box, #wake_porcupine_box { margin-top: 10px; }
+.wake-kw-list { display: flex; flex-direction: column; gap: 6px; }
+.wake-kw-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px;
+  background: #151515; border: 1px solid var(--border); border-radius: 10px;
+}
+.wake-kw-text { flex: 1; font-size: 1em; color: var(--text); word-break: break-word; }
+.wake-kw-del {
+  flex: none; width: 38px; height: 38px; border: 1px solid #7f1d1d; border-radius: 8px;
+  background: rgba(220, 38, 38, 0.15); color: #fff; font-size: 1em; cursor: pointer;
+}
+.wake-kw-del:hover:not(:disabled) { background: rgba(220, 38, 38, 0.35); }
+.wake-kw-del:disabled { opacity: .35; cursor: not-allowed; }
+.wake-kw-add-btn { background: var(--btn); border: 1px dashed var(--accent-border); color: var(--accent); }
+.wake-kw-add { margin-top: 10px; }
+.wake-kw-add-actions { display: flex; gap: 8px; }
+.wake-kw-add-actions .btn { flex: 1; }
+.wake-btn-cancel { background: #3f3f46; }
+.sc-confirm {
+  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, 0.65);
+}
+.sc-confirm[hidden] { display: none; }
+.sc-confirm-box {
+  width: 100%; max-width: 360px; padding: 18px; border-radius: 14px;
+  background: var(--card); border: 1px solid var(--border); box-shadow: 0 10px 40px rgba(0, 0, 0, .6);
+}
+.sc-confirm-box p { margin: 0 0 6px; color: var(--text); line-height: 1.45; white-space: pre-line; }
+.sc-confirm-actions { display: flex; gap: 8px; }
+.sc-confirm-actions .btn { flex: 1; width: auto; padding: 12px; margin-top: 10px; }
 #custom_mac[readonly] { background: #111; color: #aaa; }
 
 .unit-grid { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 8px; }

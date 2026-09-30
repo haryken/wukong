@@ -86,8 +86,8 @@ object DemoSpeech : SpeechModuleFactory() {
     private var understander: AbstractUnderstander? = null
 
     private var speechServiceStub: CompositeSpeechService? = null
-    /** Wake detector (sherpa-onnx KWS) – cần start lại sau TTS stop để hey mini hoạt động. */
-    private var wakeUpDetectorRef: SherpaOnnxWakeUpDetector? = null
+    /** Wake detector (Sherpa / Porcupine, đổi trên web :8080) – cần start lại sau TTS stop để hey mini hoạt động. */
+    private var wakeUpDetectorRef: SwitchableWakeUpDetector? = null
     private var xiaozhiSessionRef: XiaozhiSessionManager? = null
     private var xiaozhiAudioSessionId: Int = 0
     @Volatile
@@ -290,8 +290,11 @@ object DemoSpeech : SpeechModuleFactory() {
             }
         }
 
-        // sherpa-onnx KWS (local, assets/sherpa-kws) – no Picovoice device quota
-        val wakeUpDetector = SherpaOnnxWakeUpDetector(appContext)
+        // Sherpa-ONNX (offline) hoặc Porcupine (AccessKey) – chọn ở web :8080, Porcupine lỗi → Sherpa
+        val wakeUpDetector = SwitchableWakeUpDetector(appContext)
+        WakeEngineSettings.init(appContext)
+        wakeUpDetector.applySettings(WakeEngineSettings.snapshot())
+        WakeEngineSettings.attach(wakeUpDetector)
         wakeUpDetectorRef = wakeUpDetector
         wakeUpDetector.registerListener { wakeUp: WakeUp? ->
             handleWakeup(hostService, wakeUp, service)
@@ -341,7 +344,7 @@ object DemoSpeech : SpeechModuleFactory() {
                     val kwsReady = wakeUpDetector.waitUntilReady(15_000L)
                     if (kwsReady) {
                         (recognizer as? DemoRecognizer)?.startMicForWakeWord()
-                        LogUtils.i(TAG, "[WakeWord] mic started – sherpa ready, say HEY MINI")
+                        LogUtils.i(TAG, "[WakeWord] mic started – ${wakeUpDetector.activeEngineId} ready, say HEY MINI")
                         // Local ready: không ting — ting chỉ khi hey mini / chạm đầu.
                         if (!localReadySignaled) {
                             localReadySignaled = true
@@ -352,7 +355,7 @@ object DemoSpeech : SpeechModuleFactory() {
                             LogUtils.w(TAG, "IdleAmbientSkillScheduler: ${e.message}")
                         }
                     } else {
-                        LogUtils.e(TAG, "[WakeWord] sherpa not ready – mic NOT started (check sherpa-kws ONNX bundle)")
+                        LogUtils.e(TAG, "[WakeWord] ${wakeUpDetector.activeEngineId} not ready – mic NOT started (check sherpa-kws ONNX bundle / Porcupine key)")
                     }
                     LogUtils.i("init success (background).")
 

@@ -135,6 +135,11 @@ dependencies {
 
   // sherpa-onnx KWS – offline wake word on device (no Picovoice activation quota)
   implementation(name: 'sherpa-onnx-1.13.2', ext: 'aar')
+  // Porcupine 4.x (khớp hey-mini_en_android_v4_0_0.ppn) – engine đánh thức thứ 2, chọn trên web :8080.
+  // okhttp 4 của Porcupine chỉ dùng cho trainWakeWordFromPhrase (không gọi) và sẽ đè okhttp 3.12 của Xiaozhi.
+  implementation('ai.picovoice:porcupine-android:4.0.2') {
+    exclude group: 'com.squareup.okhttp3'
+  }
 
   // Concentus: embedded source from lostromb/concentus (org.concentus) - no external JAR
 

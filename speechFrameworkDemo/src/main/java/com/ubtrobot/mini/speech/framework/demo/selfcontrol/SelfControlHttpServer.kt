@@ -2,6 +2,7 @@ package com.ubtrobot.mini.speech.framework.demo.selfcontrol
 
 import android.content.Context
 import android.util.Log
+import com.ubtrobot.mini.speech.framework.demo.WakeEngineSettings
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -93,6 +94,7 @@ object SelfControlHttpServer {
     fun start(context: Context) {
         if (!isMainProcess(context)) return
         SelfControlStore.init(context)
+        WakeEngineSettings.init(context)
         appContext = context.applicationContext
         SelfControlCameraMjpeg.init(context)
         SelfControlIntercom.init(context)
@@ -288,6 +290,25 @@ object SelfControlHttpServer {
                         req.optString("summary")
                     )
                     writeResponse(sock.getOutputStream(), 200, "application/json; charset=utf-8", """{"success":true}""")
+                }
+                method == "GET" && path == "/api/wake_engine" -> {
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        WakeEngineSettings.statusJson().toString()
+                    )
+                }
+                method == "POST" && path == "/api/wake_engine" -> {
+                    val resp = try {
+                        WakeEngineSettings.applyPostJson(JSONObject(body.ifBlank { "{}" }))
+                    } catch (e: Exception) {
+                        JSONObject().put("success", false).put("error", e.message ?: "lỗi")
+                    }
+                    writeResponse(
+                        sock.getOutputStream(),
+                        if (resp.optBoolean("success")) 200 else 400,
+                        "application/json; charset=utf-8",
+                        resp.toString()
+                    )
                 }
                 method == "GET" && path == "/api/config" -> {
                     val json = SelfControlStore.buildGetConfigJson().toString()
