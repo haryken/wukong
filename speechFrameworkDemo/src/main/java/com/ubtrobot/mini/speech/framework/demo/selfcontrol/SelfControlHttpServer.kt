@@ -297,6 +297,26 @@ object SelfControlHttpServer {
                         WakeEngineSettings.statusJson().toString()
                     )
                 }
+                method == "GET" && path == "/api/wake_debug.wav" -> {
+                    val wav = WakeEngineSettings.recentPcmWav()
+                    if (wav == null) {
+                        writeResponse(sock.getOutputStream(), 404, "text/plain", "Engine hiện tại không phải Sherpa")
+                    } else {
+                        val headers = buildString {
+                            append("HTTP/1.1 200 OK\r\n")
+                            append("Content-Type: audio/wav\r\n")
+                            append("Content-Length: ${wav.size}\r\n")
+                            append("Cache-Control: no-cache\r\n")
+                            append("Access-Control-Allow-Origin: *\r\n")
+                            append("Connection: close\r\n")
+                            append("\r\n")
+                        }.toByteArray(Charsets.US_ASCII)
+                        val out = sock.getOutputStream()
+                        out.write(headers)
+                        out.write(wav)
+                        out.flush()
+                    }
+                }
                 method == "POST" && path == "/api/wake_engine" -> {
                     val resp = try {
                         WakeEngineSettings.applyPostJson(JSONObject(body.ifBlank { "{}" }))

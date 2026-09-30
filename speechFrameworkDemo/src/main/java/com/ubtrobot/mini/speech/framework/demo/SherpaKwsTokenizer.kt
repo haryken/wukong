@@ -5,34 +5,26 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Tách cụm tiếng Anh thành token cho sherpa KWS (vd. "hey mini" → "▁HE Y ▁MIN I").
- * bpe.model của gigaspeech KWS là sentencepiece *unigram* → Viterbi theo score từng piece
+ * Tách cụm thành token cho sherpa KWS (vd. "hey mini" → "▁HE Y ▁MIN I", "mini ơi" → "▁MI NI ▁ƠI").
+ * bpe.model của cả model Anh lẫn Việt là sentencepiece *unigram* → Viterbi theo score từng piece
  * (đọc thẳng protobuf ModelProto, không cần thư viện sentencepiece).
  */
 class SherpaKwsTokenizer private constructor(private val pieces: Map<String, Float>) {
 
   companion object {
-    private const val MODEL_ASSET = "sherpa-kws/bpe.model"
     private const val WORD_BOUNDARY = "\u2581"
     private const val MAX_PIECE_CHARS = 16
     /** SentencePiece.Type.NORMAL – bỏ qua <unk>, control, user-defined. */
     private const val TYPE_NORMAL = 1
 
-    @Volatile private var instance: SherpaKwsTokenizer? = null
+    private val instances = HashMap<String, SherpaKwsTokenizer>()
 
-    fun get(context: Context): SherpaKwsTokenizer {
-      instance?.let { return it }
-      synchronized(this) {
-        instance?.let { return it }
-        val bytes = context.assets.open(MODEL_ASSET).use { it.readBytes() }
-        return SherpaKwsTokenizer(parseModel(bytes)).also { instance = it }
+    fun get(context: Context, model: SherpaKwsModel): SherpaKwsTokenizer {
+      synchronized(instances) {
+        instances[model.bpeModel]?.let { return it }
+        val bytes = context.assets.open(model.bpeModel).use { it.readBytes() }
+        return SherpaKwsTokenizer(parseModel(bytes)).also { instances[model.bpeModel] = it }
       }
-    }
-
-    /** "  hey   Mini " → "HEY MINI"; trả rỗng nếu có ký tự ngoài A-Z / ' / khoảng trắng. */
-    fun normalizePhrase(raw: String): String {
-      val up = raw.trim().uppercase().replace(Regex("\\s+"), " ")
-      return if (up.matches(Regex("[A-Z' ]+"))) up else ""
     }
 
     private fun parseModel(buf: ByteArray): Map<String, Float> {
@@ -102,7 +94,7 @@ class SherpaKwsTokenizer private constructor(private val pieces: Map<String, Flo
     }
   }
 
-  /** Cụm đã normalize → "▁HE Y ▁MIN I", hoặc null nếu có từ không tách được. */
+  /** Cụm đã normalize ([SherpaKwsModel.normalizePhrase]) → "▁HE Y ▁MIN I", hoặc null nếu có từ không tách được. */
   fun encodePhrase(normalized: String): String? {
     val out = ArrayList<String>()
     for (word in normalized.split(' ')) {

@@ -141,16 +141,18 @@
             <h3>🎙️ <span>Đánh thức</span></h3>
             <div class="help-box"><strong data-i18n="common.howto">Cách dùng</strong><ol>
                 <li>Chọn engine rồi bấm Lưu — đổi ngay, không cần khởi động lại robot.</li>
-                <li>Sherpa-ONNX: offline, miễn phí. Bấm "➕ Thêm từ đánh thức" để thêm từng cụm tiếng Anh (vd. hey robot); thêm / xoá được áp dụng ngay.</li>
+                <li>Sherpa tiếng Anh / tiếng Việt: offline, miễn phí. Bấm "➕ Thêm từ đánh thức" để thêm từng cụm (vd. hey robot / mini ơi); thêm / xoá được áp dụng ngay. Mỗi ngôn ngữ có danh sách và độ nhạy riêng.</li>
+                <li>Sherpa tiếng Việt dùng model lớn hơn: nạp khoảng 1 phút (trong lúc đó robot vẫn nghe bằng Sherpa tiếng Anh), tốn CPU hơn; lỗi → robot tự quay về Sherpa tiếng Anh. Đổi từ / độ nhạy áp dụng ngay, không phải nạp lại.</li>
                 <li>Porcupine: cần AccessKey ở console.picovoice.ai, robot cần Internet; gói free giới hạn số thiết bị. Từ đánh thức cố định "Hey Mini".</li>
                 <li>Độ nhạy cao = dễ nghe thấy hơn nhưng dễ tự đánh thức nhầm.</li>
-                <li>Porcupine lỗi (sai key / hết quota / mất mạng) → robot tự quay về Sherpa.</li>
+                <li>Porcupine lỗi (sai key / hết quota / mất mạng) → robot tự quay về Sherpa tiếng Anh.</li>
             </ol></div>
             <div class="live-status" id="wake_runtime">Đang tải…</div>
 
             <label for="wake_engine">Engine</label>
             <select id="wake_engine" class="wake-select" onchange="wakeEngineSyncUI()">
-                <option value="sherpa">Sherpa-ONNX (offline)</option>
+                <option value="sherpa">Sherpa-ONNX tiếng Anh (offline)</option>
+                <option value="sherpa_vi">Sherpa-ONNX tiếng Việt (offline)</option>
                 <option value="porcupine">Picovoice Porcupine</option>
             </select>
 
@@ -165,9 +167,9 @@
                         <button type="button" class="btn btn-save" id="wake_kw_add_confirm" onclick="wakeKwAdd()">Thêm</button>
                         <button type="button" class="btn wake-btn-cancel" onclick="wakeKwShowAdd(false)">Huỷ</button>
                     </div>
-                    <p class="mac-hint">Chỉ chữ tiếng Anh không dấu, tối đa 4 từ. Nên dùng cụm 2–3 âm tiết ít gặp khi nói chuyện.</p>
+                    <p class="mac-hint" id="wake_kw_hint">Chỉ chữ tiếng Anh không dấu, tối đa 4 từ. Nên dùng cụm 2–3 âm tiết ít gặp khi nói chuyện.</p>
                 </div>
-                <label for="wake_sherpa_sens">Độ nhạy Sherpa: <span id="wake_sherpa_sens_val">50%</span></label>
+                <label for="wake_sherpa_sens"><span id="wake_sherpa_sens_name">Độ nhạy Sherpa tiếng Anh</span>: <span id="wake_sherpa_sens_val">50%</span></label>
                 <input type="range" id="wake_sherpa_sens" class="wake-range" min="0" max="100" step="5" value="50" oninput="wakeSensLabel('wake_sherpa_sens')">
             </div>
 
@@ -985,20 +987,59 @@
             if (el && lb) lb.textContent = el.value + '%';
         }
 
-        function wakeEngineSyncUI() {
-            const pv = document.getElementById('wake_engine').value === 'porcupine';
+        const WAKE_ENGINE_NAMES = { sherpa: 'Sherpa tiếng Anh', sherpa_vi: 'Sherpa tiếng Việt', porcupine: 'Porcupine' };
+        const WAKE_SHERPA_LANG = {
+            sherpa: {
+                listKey: 'sherpa_keywords', sensKey: 'sherpa_sensitivity',
+                valid: /^[a-zA-Z' ]+$/, invalidMsg: '❌ Chỉ dùng chữ tiếng Anh không dấu (A-Z)',
+                placeholder: 'vd. hey robot',
+                hint: 'Chỉ chữ tiếng Anh không dấu, tối đa 4 từ. Nên dùng cụm 2–3 âm tiết ít gặp khi nói chuyện.'
+            },
+            sherpa_vi: {
+                listKey: 'sherpa_vi_keywords', sensKey: 'sherpa_vi_sensitivity',
+                valid: /^[\p{L}' ]+$/u, invalidMsg: '❌ Chỉ dùng chữ cái (có dấu được), không số / ký hiệu',
+                placeholder: 'vd. mini ơi',
+                hint: 'Gõ tiếng Việt có dấu, tối đa 4 từ (vd. mini ơi, này mini). Nên dùng cụm 2–3 âm tiết ít gặp khi nói chuyện.'
+            }
+        };
+        let wakeKwLists = { sherpa: [], sherpa_vi: [] };
+        let wakeSherpaSens = { sherpa: 50, sherpa_vi: 50 };
+        let wakeSherpaShown = 'sherpa';
+
+        /** Hiện khung theo engine đang chọn; hai engine Sherpa dùng chung khung nhưng danh sách / độ nhạy riêng. */
+        function wakeEngineSyncUI(fromLoad) {
+            const engine = document.getElementById('wake_engine').value;
+            const pv = engine === 'porcupine';
             document.getElementById('wake_sherpa_box').style.display = pv ? 'none' : '';
             document.getElementById('wake_porcupine_box').style.display = pv ? '' : 'none';
+            if (pv) return;
+            const slider = document.getElementById('wake_sherpa_sens');
+            if (!fromLoad) wakeSherpaSens[wakeSherpaShown] = Number(slider.value);
+            wakeSherpaShown = engine;
+            slider.value = wakeSherpaSens[engine];
+            wakeSensLabel('wake_sherpa_sens');
+            const lang = WAKE_SHERPA_LANG[engine];
+            document.getElementById('wake_sherpa_sens_name').textContent = 'Độ nhạy ' + WAKE_ENGINE_NAMES[engine];
+            document.getElementById('wake_kw_input').placeholder = lang.placeholder;
+            document.getElementById('wake_kw_hint').textContent = lang.hint;
+            wakeKeywords = wakeKwLists[engine] || [];
+            wakeKwShowAdd(false);
+            wakeKwRender();
         }
 
         function wakeRenderStatus(d) {
             const rt = d.runtime || {};
-            const names = { sherpa: 'Sherpa-ONNX', porcupine: 'Porcupine' };
+            const names = WAKE_ENGINE_NAMES;
             let txt = rt.active
                 ? 'Đang chạy: ' + (names[rt.active] || rt.active) + (rt.ready ? ' ✅ sẵn sàng' : ' ⏳ đang khởi động')
                 : 'Engine chưa khởi động (robot đang init)';
-            if (rt.fallback_reason) txt += ' — Porcupine lỗi, dùng tạm Sherpa: ' + rt.fallback_reason;
-            else if (rt.error) txt += ' — lỗi: ' + rt.error;
+            if (rt.pending) {
+                txt += ' · ⏳ đang nạp ' + (names[rt.pending] || rt.pending)
+                    + ' (khoảng 1 phút, tạm nghe bằng ' + (names[rt.active] || rt.active) + ')';
+            }
+            if (rt.fallback_reason) {
+                txt += ' — ' + (names[rt.requested] || rt.requested) + ' lỗi, dùng tạm Sherpa tiếng Anh: ' + rt.fallback_reason;
+            } else if (rt.error) txt += ' — lỗi: ' + rt.error;
             if (rt.last_keyword) txt += ' · lần cuối nghe: "' + rt.last_keyword + '"';
             document.getElementById('wake_runtime').textContent = txt;
             document.getElementById('wake_pv_key_hint').textContent = d.porcupine_has_key
@@ -1043,14 +1084,15 @@
 
         async function wakeKwAdd() {
             const input = document.getElementById('wake_kw_input');
-            const phrase = input.value.trim().replace(/\s+/g, ' ');
+            const phrase = input.value.normalize('NFC').trim().replace(/\s+/g, ' ');
+            const lang = WAKE_SHERPA_LANG[wakeSherpaShown];
             if (!phrase) { showToast('Nhập từ đánh thức trước'); input.focus(); return; }
-            if (!/^[a-zA-Z' ]+$/.test(phrase)) { showToast('❌ Chỉ dùng chữ tiếng Anh không dấu (A-Z)'); input.focus(); return; }
+            if (!lang.valid.test(phrase)) { showToast(lang.invalidMsg); input.focus(); return; }
             if (phrase.split(' ').length > 4) { showToast('❌ Tối đa 4 từ'); input.focus(); return; }
             if (wakeKeywords.some(k => k.toUpperCase() === phrase.toUpperCase())) {
                 showToast('"' + phrase.toLowerCase() + '" đã có trong danh sách'); input.focus(); return;
             }
-            const d = await postWakeEngine({ sherpa_keywords: wakeKeywords.concat([phrase]) },
+            const d = await postWakeEngine({ [lang.listKey]: wakeKeywords.concat([phrase]) },
                 '✅ Đã thêm "' + phrase.toLowerCase() + '"');
             if (d) wakeKwShowAdd(false);
         }
@@ -1060,7 +1102,7 @@
             if (kw == null || wakeKeywords.length <= 1) return;
             const ok = await scConfirm('Xoá từ đánh thức "' + kw.toLowerCase() + '"?\nRobot sẽ không thức dậy khi nghe cụm này nữa.', 'Xoá');
             if (!ok) return;
-            await postWakeEngine({ sherpa_keywords: wakeKeywords.filter((_, j) => j !== i) },
+            await postWakeEngine({ [WAKE_SHERPA_LANG[wakeSherpaShown].listKey]: wakeKeywords.filter((_, j) => j !== i) },
                 '🗑️ Đã xoá "' + kw.toLowerCase() + '"');
         }
 
@@ -1091,24 +1133,25 @@
         async function loadWakeEngine(keepInputs) {
             try {
                 const d = await (await fetch('/api/wake_engine')).json();
-                wakeKeywords = d.sherpa_keywords || [];
-                wakeKwRender();
+                const pct = (v) => Math.round((v != null ? v : 0.5) * 100);
+                wakeKwLists = { sherpa: d.sherpa_keywords || [], sherpa_vi: d.sherpa_vi_keywords || [] };
                 if (!keepInputs) {
                     document.getElementById('wake_engine').value = d.engine || 'sherpa';
-                    document.getElementById('wake_sherpa_sens').value =
-                        Math.round((d.sherpa_sensitivity != null ? d.sherpa_sensitivity : 0.5) * 100);
-                    document.getElementById('wake_pv_sens').value =
-                        Math.round((d.porcupine_sensitivity != null ? d.porcupine_sensitivity : 0.5) * 100);
+                    wakeSherpaSens = { sherpa: pct(d.sherpa_sensitivity), sherpa_vi: pct(d.sherpa_vi_sensitivity) };
+                    document.getElementById('wake_pv_sens').value = pct(d.porcupine_sensitivity);
                     document.getElementById('wake_pv_key').value = '';
-                    wakeSensLabel('wake_sherpa_sens');
                     wakeSensLabel('wake_pv_sens');
-                    wakeEngineSyncUI();
+                    wakeEngineSyncUI(true);
+                } else {
+                    wakeKeywords = wakeKwLists[wakeSherpaShown] || [];
+                    wakeKwRender();
                 }
                 wakeRenderStatus(d);
                 clearTimeout(wakeStatusTimer);
                 const sec = document.getElementById('bot-wake');
-                if (sec && sec.classList.contains('open') && !(d.runtime && d.runtime.ready)) {
-                    wakeStatusTimer = setTimeout(() => loadWakeEngine(true), 1500);
+                const rt = d.runtime || {};
+                if (sec && sec.classList.contains('open') && (!rt.ready || rt.pending)) {
+                    wakeStatusTimer = setTimeout(() => loadWakeEngine(true), rt.pending ? 3000 : 1500);
                 }
             } catch (err) {
                 document.getElementById('wake_runtime').textContent = 'Lỗi tải: ' + err.message;
@@ -1145,9 +1188,12 @@
         }
 
         function saveWakeEngine() {
+            const engine = document.getElementById('wake_engine').value;
+            if (engine !== 'porcupine') wakeSherpaSens[engine] = Number(document.getElementById('wake_sherpa_sens').value);
             const payload = {
-                engine: document.getElementById('wake_engine').value,
-                sherpa_sensitivity: Number(document.getElementById('wake_sherpa_sens').value) / 100,
+                engine,
+                sherpa_sensitivity: wakeSherpaSens.sherpa / 100,
+                sherpa_vi_sensitivity: wakeSherpaSens.sherpa_vi / 100,
                 porcupine_sensitivity: Number(document.getElementById('wake_pv_sens').value) / 100
             };
             const key = document.getElementById('wake_pv_key').value.trim();

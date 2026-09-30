@@ -21,6 +21,13 @@ public class DemoRecognizer extends AbstractRecognizer {
   private static final int SAMPLE_RATE = 16000;
   private static final int FRAME_MS = 60;
   private static final int FRAME_BYTES = SAMPLE_RATE * FRAME_MS / 1000 * 2; // 16-bit mono
+  /**
+   * Mic thật luôn có nhiễu nền (peak vài chục trở lên). Sau khi hệ thống phát MP3 44.1 kHz (vd. skill FART),
+   * HAL AEC có thể trả toàn 0 mãi – im tuyệt đối quá lâu thì mở lại AudioRecord.
+   */
+  private static final int DEAD_MIC_PEAK = 8;
+  private static final long DEAD_MIC_RESTART_MS = 4000;
+  private static final long DEAD_MIC_MIN_INTERVAL_MS = 15000;
 
   private final TencentVadRecorder recorder;
   private volatile XiaozhiSessionManager xiaozhiSessionManager;
@@ -36,6 +43,8 @@ public class DemoRecognizer extends AbstractRecognizer {
   private final AtomicBoolean directRecordRunning = new AtomicBoolean(false);
   private volatile boolean loggedNoXiaozhiOnce = false;
   private volatile boolean loggedNoWakeFeederOnce = false;
+  private final AtomicBoolean deadMicRestarting = new AtomicBoolean(false);
+  private volatile long lastDeadMicRestartMs = 0;
   /** Cùng luồng PCM gửi vào wake word (hey mini) – đảm bảo audio đang gửi Xiaozhi cũng được nhận bởi Porcupine. */
   private WakeWordPcmFeeder wakeWordPcmFeeder;
 
@@ -176,6 +185,7 @@ public class DemoRecognizer extends AbstractRecognizer {
       long lastLogNs = System.currentTimeMillis();
       int framesSent = 0;
       int readCalls = 0;
+      long silentSinceMs = 0;
       while (directRecordRunning.get() && directRecord != null) {
         int read = directRecord.read(readBuf, 0, readBuf.length);
         if (read <= 0) {
@@ -183,6 +193,25 @@ public class DemoRecognizer extends AbstractRecognizer {
           continue;
         }
         readCalls++;
+        long nowMs = System.currentTimeMillis();
+        if (peakAbs(readBuf, read) > DEAD_MIC_PEAK) {
+          silentSinceMs = 0;
+        } else if (silentSinceMs == 0) {
+          silentSinceMs = nowMs;
+        } else if (nowMs - silentSinceMs >= DEAD_MIC_RESTART_MS
+            && nowMs - lastDeadMicRestartMs >= DEAD_MIC_MIN_INTERVAL_MS
+            && deadMicRestarting.compareAndSet(false, true)) {
+          lastDeadMicRestartMs = nowMs;
+          Log.w(TAG, "Mic trả toàn 0 suốt " + (nowMs - silentSinceMs) + "ms (AEC/HAL kẹt sau khi phát âm thanh) → restart AudioRecord");
+          new Thread(() -> {
+            try {
+              restartDirectAudioRecord();
+            } finally {
+              deadMicRestarting.set(false);
+            }
+          }, "MicDeadRestart").start();
+          break;
+        }
         pcmAlign.write(readBuf, 0, read);
         byte[] data = pcmAlign.toByteArray();
         int offset = 0;
@@ -213,6 +242,16 @@ public class DemoRecognizer extends AbstractRecognizer {
       Log.i(TAG, "AudioRecord thread exit, frames sent=" + framesSent);
     }, "XiaozhiMic");
     directRecordThread.start();
+  }
+
+  private static int peakAbs(byte[] pcm, int len) {
+    int peak = 0;
+    for (int i = 0; i + 1 < len; i += 2) {
+      int s = (short) ((pcm[i] & 0xff) | (pcm[i + 1] << 8));
+      if (s < 0) s = -s;
+      if (s > peak) peak = s;
+    }
+    return peak;
   }
 
   private void stopDirectAudioRecord() {

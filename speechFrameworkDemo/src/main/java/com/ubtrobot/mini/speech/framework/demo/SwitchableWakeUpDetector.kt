@@ -8,8 +8,9 @@ import com.ubtrobot.speech.AbstractWakeUpDetector
 import org.json.JSONObject
 
 /**
- * WakeUpDetector đăng ký 1 lần với CompositeSpeechService; bên trong đổi engine (Sherpa / Porcupine)
- * lúc đang chạy mà không phải dựng lại speech service hay mic. Porcupine lỗi → tự quay về Sherpa.
+ * WakeUpDetector đăng ký 1 lần với CompositeSpeechService; bên trong đổi engine (Sherpa Anh / Sherpa Việt /
+ * Porcupine) lúc đang chạy mà không phải dựng lại speech service hay mic.
+ * Porcupine hoặc Sherpa Việt lỗi → tự quay về Sherpa Anh.
  */
 class SwitchableWakeUpDetector(private val context: Context) :
     AbstractWakeUpDetector(),
@@ -18,7 +19,9 @@ class SwitchableWakeUpDetector(private val context: Context) :
   companion object {
     private const val TAG = "WakeEngineSwitch"
     const val ENGINE_SHERPA = "sherpa"
+    const val ENGINE_SHERPA_VI = "sherpa_vi"
     const val ENGINE_PORCUPINE = "porcupine"
+    val ALL_ENGINES = listOf(ENGINE_SHERPA, ENGINE_SHERPA_VI, ENGINE_PORCUPINE)
     private const val PORCUPINE_RETRY_MS = 30_000L
     private const val PORCUPINE_MAX_RETRIES = 10
   }
@@ -35,19 +38,25 @@ class SwitchableWakeUpDetector(private val context: Context) :
       switchTo(p)
     }
   }
-  private val sherpa = SherpaOnnxWakeUpDetector(context)
+  private val sherpa = SherpaOnnxWakeUpDetector(context, SherpaKwsModel.ENGLISH)
+  private val sherpaVi = SherpaOnnxWakeUpDetector(context, SherpaKwsModel.VIETNAMESE)
   private var porcupine: PorcupineWakeEngine? = null
   @Volatile private var active: WakeEngine = sherpa
+  /** Engine đang nạp model (Sherpa Việt ~1 phút); [active] vẫn nghe cho tới khi nó sẵn sàng. */
+  @Volatile private var pending: WakeEngine? = null
   @Volatile private var started = false
   @Volatile private var suppressUntilMs = 0L
   @Volatile private var requestedEngine = ENGINE_SHERPA
 
-  /** Lý do đang chạy Sherpa dù đã chọn Porcupine (rỗng nếu đúng engine đã chọn). */
+  /** Lý do đang chạy Sherpa Anh dù đã chọn engine khác (rỗng nếu đúng engine đã chọn). */
   @Volatile var fallbackReason: String = ""
     private set
 
   init {
     sherpa.onDetected = { onEngineDetected(sherpa) }
+    sherpaVi.onDetected = { onEngineDetected(sherpaVi) }
+    sherpaVi.onFatalError = { reason -> fallbackToSherpa(sherpaVi, "Sherpa tiếng Việt lỗi: $reason", retry = false) }
+    sherpaVi.onReady = { onPendingReady(sherpaVi) }
   }
 
   var lastDetectedKeyword: String
@@ -70,20 +79,22 @@ class SwitchableWakeUpDetector(private val context: Context) :
       handler.removeCallbacks(retryPorcupine)
       porcupineRetries = 0
       sherpa.configure(s.sherpaKeywords, s.sherpaSensitivity)
-      if (s.engine != ENGINE_PORCUPINE) {
-        fallbackReason = ""
-        switchTo(sherpa)
-        return
-      }
-      val p = porcupine ?: createPorcupine()
-      if (p == null) {
-        fallbackReason = "Thiếu thư viện Porcupine trong APK"
-        switchTo(sherpa)
-        return
-      }
+      sherpaVi.configure(s.sherpaViKeywords, s.sherpaViSensitivity)
       fallbackReason = ""
-      p.configure(s.porcupineAccessKey, s.porcupineSensitivity)
-      switchTo(p)
+      when (s.engine) {
+        ENGINE_SHERPA_VI -> switchTo(sherpaVi)
+        ENGINE_PORCUPINE -> {
+          val p = porcupine ?: createPorcupine()
+          if (p == null) {
+            fallbackReason = "Thiếu thư viện Porcupine trong APK"
+            switchTo(sherpa)
+          } else {
+            p.configure(s.porcupineAccessKey, s.porcupineSensitivity)
+            switchTo(p)
+          }
+        }
+        else -> switchTo(sherpa)
+      }
     }
   }
 
@@ -91,7 +102,7 @@ class SwitchableWakeUpDetector(private val context: Context) :
     return try {
       PorcupineWakeEngine(context).also { p ->
         p.onDetected = { onEngineDetected(p) }
-        p.onFatalError = { reason -> onPorcupineFatal(p, reason) }
+        p.onFatalError = { reason -> fallbackToSherpa(p, reason, p.lastErrorRetryable) }
         porcupine = p
       }
     } catch (e: Throwable) {
@@ -100,17 +111,20 @@ class SwitchableWakeUpDetector(private val context: Context) :
     }
   }
 
-  private fun onPorcupineFatal(p: PorcupineWakeEngine, reason: String) {
-    fallbackFromPorcupine(p, reason, p.lastErrorRetryable)
-  }
-
-  private fun fallbackFromPorcupine(p: PorcupineWakeEngine, reason: String, retry: Boolean) {
+  private fun fallbackToSherpa(from: WakeEngine, reason: String, retry: Boolean) {
     synchronized(lock) {
-      if (active !== p) return
+      if (pending === from) {
+        pending = null
+        from.stop()
+        fallbackReason = reason
+        LogUtils.w(TAG, "[WakeWord] ${from.engineId} nạp lỗi → giữ ${active.engineId}: $reason")
+        return
+      }
+      if (active !== from) return
       fallbackReason = reason
-      LogUtils.w(TAG, "[WakeWord] Porcupine lỗi → quay về Sherpa: $reason")
+      LogUtils.w(TAG, "[WakeWord] ${from.engineId} lỗi → quay về Sherpa Anh: $reason")
       switchTo(sherpa)
-      if (retry && porcupineRetries < PORCUPINE_MAX_RETRIES) {
+      if (retry && from === porcupine && porcupineRetries < PORCUPINE_MAX_RETRIES) {
         porcupineRetries++
         handler.removeCallbacks(retryPorcupine)
         handler.postDelayed(retryPorcupine, PORCUPINE_RETRY_MS)
@@ -119,46 +133,83 @@ class SwitchableWakeUpDetector(private val context: Context) :
   }
 
   private fun switchTo(target: WakeEngine) {
+    pending?.let { if (it !== target) it.stop() }
+    pending = null
     val old = active
     if (old === target) {
       if (started) target.start()
       return
     }
+    if (!started) {
+      active = target
+      return
+    }
+    if (target === sherpaVi && !target.isStreamReady()) {
+      pending = target
+      target.start()
+      LogUtils.i(TAG, "[WakeWord] nạp ${target.engineId}, tạm nghe bằng ${old.engineId}")
+      return
+    }
+    commitSwitch(old, target)
+  }
+
+  private fun commitSwitch(old: WakeEngine, target: WakeEngine) {
     active = target
     LogUtils.i(TAG, "[WakeWord] engine ${old.engineId} → ${target.engineId}")
-    if (!started) return
     old.stop()
     val remain = suppressUntilMs - System.currentTimeMillis()
     if (remain > 0) target.suppressWakeFor(remain) else target.clearSuppressWake()
     target.start()
   }
 
+  private fun onPendingReady(engine: WakeEngine) {
+    synchronized(lock) {
+      if (pending !== engine) return
+      pending = null
+      if (active !== engine) commitSwitch(active, engine)
+    }
+  }
+
+  /** Engine cần nạp lâu (Sherpa Việt) → bật Sherpa Anh trước để mic chạy ngay, tự chuyển khi nạp xong. */
   fun start() {
-    started = true
-    active.start()
+    synchronized(lock) {
+      started = true
+      val want = active
+      if (want === sherpaVi && !want.isStreamReady()) {
+        active = sherpa
+        sherpa.start()
+        switchTo(sherpaVi)
+      } else {
+        want.start()
+      }
+    }
   }
 
   fun stop() {
-    started = false
-    active.stop()
+    synchronized(lock) {
+      started = false
+      pending?.stop()
+      pending = null
+      active.stop()
+    }
   }
 
   fun isStreamReady(): Boolean = active.isStreamReady()
 
   /**
-   * Chờ engine đang chọn sẵn sàng. Porcupine lỗi hoặc quá nửa hạn chờ (kích hoạt online chậm)
-   * → Sherpa thay trong cùng hạn chờ, để DemoSpeech vẫn bật được mic.
+   * Chờ engine đang chọn sẵn sàng. Porcupine / Sherpa Việt lỗi hoặc quá nửa hạn chờ (kích hoạt online chậm,
+   * model lớn nạp lâu) → Sherpa Anh thay trong cùng hạn chờ, để DemoSpeech vẫn bật được mic.
    */
   fun waitUntilReady(timeoutMs: Long = 15_000L): Boolean {
     if (!started) start()
     val begin = System.currentTimeMillis()
     val deadline = begin + timeoutMs
-    val porcupineDeadline = begin + timeoutMs / 2
+    val secondaryDeadline = begin + timeoutMs / 2
     while (System.currentTimeMillis() < deadline) {
-      if (active.isStreamReady()) return true
-      val p = porcupine
-      if (p != null && active === p && System.currentTimeMillis() > porcupineDeadline) {
-        fallbackFromPorcupine(p, "Porcupine khởi động quá lâu (mạng chậm?)", retry = true)
+      val cur = active
+      if (cur.isStreamReady()) return true
+      if (cur !== sherpa && System.currentTimeMillis() > secondaryDeadline) {
+        fallbackToSherpa(cur, "${cur.engineId} khởi động quá lâu", retry = cur === porcupine)
       }
       try {
         Thread.sleep(50)
@@ -184,9 +235,12 @@ class SwitchableWakeUpDetector(private val context: Context) :
     active.feedPcmFrame(frame)
   }
 
+  fun recentPcmWav(): ByteArray? = (active as? SherpaOnnxWakeUpDetector)?.recentPcmWav()
+
   fun statusJson(): JSONObject = JSONObject().apply {
     put("requested", requestedEngine)
     put("active", active.engineId)
+    put("pending", pending?.engineId ?: "")
     put("ready", active.isStreamReady())
     put("fallback_reason", fallbackReason)
     put("error", active.lastError)
