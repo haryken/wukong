@@ -32,6 +32,7 @@ class XiaozhiOtaClient(
     }
 
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .dns(XiaozhiDns)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()

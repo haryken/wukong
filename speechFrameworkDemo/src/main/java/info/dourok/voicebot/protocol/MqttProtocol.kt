@@ -3,6 +3,7 @@ package info.dourok.voicebot.protocol
 import android.content.Context
 import android.util.Log
 import com.ubtrobot.mini.speech.framework.demo.MiniRobotActionInvoker
+import com.ubtrobot.mini.speech.framework.demo.XiaozhiDns
 import com.ubtrobot.mini.speech.framework.demo.XiaozhiMcpResponder
 import com.ubtrobot.mini.speech.framework.demo.XiaozhiMqttConfig
 import com.ubtrobot.mini.speech.framework.demo.deriveMqttSubscribeTopic
@@ -1012,7 +1013,7 @@ private class UdpClient(private val server: String, private val port: Int) {
 
     init {
         try {
-            serverAddress = InetAddress.getByName(server)
+            serverAddress = XiaozhiDns.lookup(server).first()
             socket = DatagramSocket().apply {
                 soTimeout = 0
                 receiveBufferSize = receiveBufferSize.coerceAtLeast(512 * 1024)

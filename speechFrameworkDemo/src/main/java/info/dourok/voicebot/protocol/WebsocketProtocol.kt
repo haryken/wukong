@@ -2,6 +2,7 @@ package info.dourok.voicebot.protocol
 
 import android.util.Log
 import com.ubtrobot.mini.speech.framework.demo.MiniRobotActionInvoker
+import com.ubtrobot.mini.speech.framework.demo.XiaozhiDns
 import com.ubtrobot.mini.speech.framework.demo.XiaozhiMcpResponder
 import info.dourok.voicebot.data.model.DeviceInfo
 import kotlinx.coroutines.CompletableDeferred
@@ -41,6 +42,7 @@ class WebsocketProtocol(
     private var audioSendCount = 0L
     /** Lần đầu hey mini có thể chậm (DNS, TLS, mạng) – tăng timeout tránh connect timed out. */
     private val client = OkHttpClient.Builder()
+        .dns(XiaozhiDns)
         .connectTimeout(25, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)

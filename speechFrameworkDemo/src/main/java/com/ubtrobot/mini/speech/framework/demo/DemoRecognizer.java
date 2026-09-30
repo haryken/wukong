@@ -28,6 +28,11 @@ public class DemoRecognizer extends AbstractRecognizer {
   private static final int DEAD_MIC_PEAK = 8;
   private static final long DEAD_MIC_RESTART_MS = 4000;
   private static final long DEAD_MIC_MIN_INTERVAL_MS = 15000;
+  /** audioserver chết/đang khởi động lại → AudioRecord init lỗi; thử lại tới khi nó sống lại. */
+  private static final int MIC_OPEN_MAX_RETRIES = 15;
+  private static final long MIC_OPEN_RETRY_MS = 2000;
+  /** AudioRecord.ERROR_DEAD_OBJECT (API 24) – audioserver đã chết. */
+  private static final int READ_ERROR_DEAD_OBJECT = -6;
 
   private final TencentVadRecorder recorder;
   private volatile XiaozhiSessionManager xiaozhiSessionManager;
@@ -43,8 +48,10 @@ public class DemoRecognizer extends AbstractRecognizer {
   private final AtomicBoolean directRecordRunning = new AtomicBoolean(false);
   private volatile boolean loggedNoXiaozhiOnce = false;
   private volatile boolean loggedNoWakeFeederOnce = false;
+  private volatile boolean kwsPausedForTalk = false;
   private final AtomicBoolean deadMicRestarting = new AtomicBoolean(false);
   private volatile long lastDeadMicRestartMs = 0;
+  private int micOpenFailures = 0;
   /** Cùng luồng PCM gửi vào wake word (hey mini) – đảm bảo audio đang gửi Xiaozhi cũng được nhận bởi Porcupine. */
   private WakeWordPcmFeeder wakeWordPcmFeeder;
 
@@ -96,9 +103,25 @@ public class DemoRecognizer extends AbstractRecognizer {
     }
   }
 
+  /**
+   * User đang nói với server (PCM đi lên, robot không phát TTS/nhạc) → server tự STT, không cần KWS.
+   * Robot đang nói vẫn feed KWS để gọi wake word ngắt lời được.
+   */
+  private boolean isUserTalkingToServer() {
+    XiaozhiSessionManager session = xiaozhiSessionManager;
+    return session != null && session.isAcceptingServerPcm() && !session.isPlaybackOrGreetingActive();
+  }
+
   private void sendFrameToXiaozhi(byte[] frame) {
     if (wakeWordPcmFeeder != null) {
-      wakeWordPcmFeeder.feedPcmFrame(frame);
+      boolean paused = isUserTalkingToServer();
+      if (paused != kwsPausedForTalk) {
+        kwsPausedForTalk = paused;
+        Log.i(TAG, paused
+            ? "[WakeWord] user đang nói với server → tạm dừng KWS (tiết CPU)"
+            : "[WakeWord] hết lượt user nói (TTS / WS đóng) → bật lại KWS");
+      }
+      if (!paused) wakeWordPcmFeeder.feedPcmFrame(frame);
     } else {
       if (!loggedNoWakeFeederOnce) {
         loggedNoWakeFeederOnce = true;
@@ -121,7 +144,7 @@ public class DemoRecognizer extends AbstractRecognizer {
   }
 
   /** Start Android AudioRecord in app process; feed PCM to Xiaozhi when available (WeiNa often does not deliver). */
-  private void startDirectAudioRecord() {
+  private synchronized void startDirectAudioRecord() {
     if (directRecordRunning.getAndSet(true)) return;
 
     int bufSize = Math.max(FRAME_BYTES * 4, AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT));
@@ -148,9 +171,7 @@ public class DemoRecognizer extends AbstractRecognizer {
       }
       if (directRecord.getState() != AudioRecord.STATE_INITIALIZED) {
         Log.e(TAG, "AudioRecord not initialized (state=" + directRecord.getState() + "), mic may be in use by another process");
-        directRecord.release();
-        directRecord = null;
-        directRecordRunning.set(false);
+        abortDirectAudioRecordStart("init state=" + directRecord.getState());
         return;
       }
       if (AcousticEchoCanceler.isAvailable()) {
@@ -172,10 +193,20 @@ public class DemoRecognizer extends AbstractRecognizer {
         Log.w(TAG, "NoiseSuppressor not available on this device");
       }
       directRecord.startRecording();
+      if (directRecord.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+        Log.e(TAG, "AudioRecord startRecording không vào trạng thái RECORDING");
+        abortDirectAudioRecordStart("startRecording");
+        return;
+      }
+      micOpenFailures = 0;
       Log.i(TAG, "AudioRecord started (fallback mic), buffer=" + bufSize + (xiaozhiSessionManager != null ? ", will send to Xiaozhi" : ", Xiaozhi=null (no libapp.so)"));
     } catch (SecurityException e) {
       Log.e(TAG, "AudioRecord: no RECORD_AUDIO permission?", e);
       directRecordRunning.set(false);
+      return;
+    } catch (RuntimeException e) {
+      Log.e(TAG, "AudioRecord start lỗi: " + e.getMessage(), e);
+      abortDirectAudioRecordStart(e.getClass().getSimpleName());
       return;
     }
 
@@ -188,10 +219,13 @@ public class DemoRecognizer extends AbstractRecognizer {
       long silentSinceMs = 0;
       while (directRecordRunning.get() && directRecord != null) {
         int read = directRecord.read(readBuf, 0, readBuf.length);
-        if (read <= 0) {
-          if (read == AudioRecord.ERROR_INVALID_OPERATION || read == AudioRecord.ERROR_BAD_VALUE) break;
-          continue;
+        if (read < 0 && directRecordRunning.get()
+            && (read == READ_ERROR_DEAD_OBJECT || read == AudioRecord.ERROR_INVALID_OPERATION || read == AudioRecord.ERROR_BAD_VALUE)) {
+          Log.w(TAG, "AudioRecord.read lỗi " + read + " (audioserver chết?) → restart AudioRecord");
+          requestMicRestart();
+          break;
         }
+        if (read <= 0) continue;
         readCalls++;
         long nowMs = System.currentTimeMillis();
         if (peakAbs(readBuf, read) > DEAD_MIC_PEAK) {
@@ -200,16 +234,10 @@ public class DemoRecognizer extends AbstractRecognizer {
           silentSinceMs = nowMs;
         } else if (nowMs - silentSinceMs >= DEAD_MIC_RESTART_MS
             && nowMs - lastDeadMicRestartMs >= DEAD_MIC_MIN_INTERVAL_MS
-            && deadMicRestarting.compareAndSet(false, true)) {
+            && !deadMicRestarting.get()) {
           lastDeadMicRestartMs = nowMs;
           Log.w(TAG, "Mic trả toàn 0 suốt " + (nowMs - silentSinceMs) + "ms (AEC/HAL kẹt sau khi phát âm thanh) → restart AudioRecord");
-          new Thread(() -> {
-            try {
-              restartDirectAudioRecord();
-            } finally {
-              deadMicRestarting.set(false);
-            }
-          }, "MicDeadRestart").start();
+          requestMicRestart();
           break;
         }
         pcmAlign.write(readBuf, 0, read);
@@ -254,8 +282,51 @@ public class DemoRecognizer extends AbstractRecognizer {
     return peak;
   }
 
-  private void stopDirectAudioRecord() {
+  /** Restart trên thread riêng (thread đọc mic không tự join chính nó); bỏ qua nếu đang có restart. */
+  private void requestMicRestart() {
+    if (!deadMicRestarting.compareAndSet(false, true)) return;
+    new Thread(() -> {
+      try {
+        restartDirectAudioRecord();
+      } finally {
+        deadMicRestarting.set(false);
+      }
+    }, "MicDeadRestart").start();
+  }
+
+  private void abortDirectAudioRecordStart(String reason) {
+    releaseEffects();
+    if (directRecord != null) {
+      try {
+        directRecord.release();
+      } catch (Exception e) {
+        Log.w(TAG, "AudioRecord release: " + e.getMessage());
+      }
+      directRecord = null;
+    }
     directRecordRunning.set(false);
+    scheduleMicOpenRetry(reason);
+  }
+
+  private void scheduleMicOpenRetry(String reason) {
+    if (micOpenFailures >= MIC_OPEN_MAX_RETRIES) {
+      Log.e(TAG, "Mở mic lỗi " + micOpenFailures + " lần (" + reason + ") – ngừng thử, chờ lần start kế tiếp");
+      micOpenFailures = 0;
+      return;
+    }
+    micOpenFailures++;
+    Log.w(TAG, "Mở mic lỗi (" + reason + ") → thử lại lần " + micOpenFailures + "/" + MIC_OPEN_MAX_RETRIES + " sau " + MIC_OPEN_RETRY_MS + "ms");
+    new Thread(() -> {
+      try {
+        Thread.sleep(MIC_OPEN_RETRY_MS);
+      } catch (InterruptedException e) {
+        return;
+      }
+      startDirectAudioRecord();
+    }, "MicOpenRetry").start();
+  }
+
+  private void releaseEffects() {
     if (aec != null) {
       try {
         aec.setEnabled(false);
@@ -274,14 +345,17 @@ public class DemoRecognizer extends AbstractRecognizer {
       }
       ns = null;
     }
-    if (directRecord != null) {
+  }
+
+  private synchronized void stopDirectAudioRecord() {
+    directRecordRunning.set(false);
+    AudioRecord record = directRecord;
+    if (record != null) {
       try {
-        directRecord.stop();
-        directRecord.release();
+        record.stop();
       } catch (Exception e) {
         Log.w(TAG, "AudioRecord stop: " + e.getMessage());
       }
-      directRecord = null;
     }
     if (directRecordThread != null) {
       try {
@@ -289,6 +363,16 @@ public class DemoRecognizer extends AbstractRecognizer {
       } catch (InterruptedException ignored) { }
       directRecordThread = null;
     }
+    // Chỉ gỡ AEC/NS khi capture đã dừng: HAL MTK vẫn gọi Effect_Process trên readThread → gỡ sớm làm audioserver SIGSEGV.
+    releaseEffects();
+    if (record != null) {
+      try {
+        record.release();
+      } catch (Exception e) {
+        Log.w(TAG, "AudioRecord release: " + e.getMessage());
+      }
+    }
+    directRecord = null;
     Log.i(TAG, "AudioRecord stopped");
   }
 
@@ -341,7 +425,7 @@ public class DemoRecognizer extends AbstractRecognizer {
    * vẫn sẽ gọi startRecognitionAfterWakeup() → full onNewConversationTurn() khi cần.
    */
   /** Sau dance/TTS/ting: stop + start lại AudioRecord (AEC/mic bị motor loa làm lệch). */
-  public void restartDirectAudioRecord() {
+  public synchronized void restartDirectAudioRecord() {
     Log.i(TAG, "restartDirectAudioRecord: stop + start AudioRecord (reset mic sau dance/TTS)");
     stopDirectAudioRecord();
     directRecordRunning.set(false);

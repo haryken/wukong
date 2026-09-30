@@ -46,6 +46,15 @@ class SherpaOnnxWakeUpDetector(
      * dồn tới ~27 s, wake bị trễ theo; nghe muộn vô ích hơn là mất một đoạn cũ.
      */
     private const val MAX_BACKLOG_BYTES = SAMPLE_RATE * 2
+    /**
+     * Chunk có peak dưới ngưỡng này = im lặng → không chạy ONNX (phần lớn thời gian robot ngồi chờ).
+     * Nền phòng yên đo trên robot ~60–170/32768, giọng nói gọi wake 1000+.
+     */
+    private const val SILENCE_PEAK = 300
+    /** Sau chunk có tiếng vẫn decode thêm ~1 s im lặng để KWS chốt được cuối cụm (trailing blanks). */
+    private const val SPEECH_HANGOVER_CHUNKS = 10
+    /** Chunk im lặng ngay trước tiếng nói được đưa vào lại, tránh mất phụ âm đầu cụm. */
+    private const val PRE_ROLL_CHUNKS = 2
     /** 12 s PCM gần nhất model nhận – tải qua /api/wake_debug.wav để thử lại offline. */
     private const val DEBUG_RING_BYTES = SAMPLE_RATE * 2 * 12
 
@@ -91,6 +100,7 @@ class SherpaOnnxWakeUpDetector(
   private var pcmStaleSkipped = 0L
   private var pcmChunksDecoded = 0L
   private var pcmChunksSkippedMusic = 0L
+  private var pcmChunksSkippedSilence = 0L
   private var lastAliveLogMs = 0L
   private var windowPeak = 0
   private val loggedFirstPcm = AtomicBoolean(false)
@@ -106,6 +116,11 @@ class SherpaOnnxWakeUpDetector(
     var stream: OnlineStream? = null
     val pcmAccum = FloatArray(CHUNK_SAMPLES)
     var pcmFill = 0
+    var chunkPeak = 0
+    var speechHangover = 0
+    val preRoll = Array(PRE_ROLL_CHUNKS) { FloatArray(CHUNK_SAMPLES) }
+    var preRollPos = 0
+    var preRollCount = 0
     var lastWakeMs = 0L
     var musicDecodeCounter = 0
     var activePhrases: Map<String, String> = model.defaultPhrases.associateBy { compactKey(it) }
@@ -200,11 +215,46 @@ class SherpaOnnxWakeUpDetector(
           val s = (hi shl 8) or lo
           val a = if (s < 0) -s else s
           if (a > windowPeak) windowPeak = a
+          if (a > chunkPeak) chunkPeak = a
           pcmAccum[pcmFill + i] = s / 32768.0f
         }
         pcmFill += take
         off += take
         if (pcmFill < CHUNK_SAMPLES) continue
+
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - lastAliveLogMs >= 15_000L) {
+          lastAliveLogMs = nowMs
+          LogUtils.i(
+            TAG,
+            "[WakeWord] PCM alive (${model.assetDir}): decoded=$pcmChunksDecoded musicSkip=$pcmChunksSkippedMusic " +
+              "silenceSkip=$pcmChunksSkippedSilence drops=$pcmQueueDrops staleSkip=$pcmStaleSkipped " +
+              "peak=$windowPeak/32768"
+          )
+          windowPeak = 0
+        }
+
+        val loud = chunkPeak >= SILENCE_PEAK
+        chunkPeak = 0
+        if (loud) {
+          if (speechHangover == 0) {
+            for (k in 0 until preRollCount) {
+              val idx = (preRollPos - preRollCount + k + PRE_ROLL_CHUNKS) % PRE_ROLL_CHUNKS
+              st.acceptWaveform(preRoll[idx], SAMPLE_RATE)
+            }
+            preRollCount = 0
+          }
+          speechHangover = SPEECH_HANGOVER_CHUNKS
+        } else if (speechHangover > 0) {
+          speechHangover--
+        } else {
+          System.arraycopy(pcmAccum, 0, preRoll[preRollPos], 0, CHUNK_SAMPLES)
+          preRollPos = (preRollPos + 1) % PRE_ROLL_CHUNKS
+          if (preRollCount < PRE_ROLL_CHUNKS) preRollCount++
+          pcmFill = 0
+          pcmChunksSkippedSilence++
+          continue
+        }
 
         // Lúc phát nhạc: bỏ cả accept+decode 1/N chunk (tránh backlog isReady).
         if (musicPlaying && MUSIC_DECODE_EVERY_N > 1) {
@@ -218,16 +268,6 @@ class SherpaOnnxWakeUpDetector(
         st.acceptWaveform(pcmAccum, SAMPLE_RATE)
         pcmFill = 0
         pcmChunksDecoded++
-        val nowMs = System.currentTimeMillis()
-        if (nowMs - lastAliveLogMs >= 15_000L) {
-          lastAliveLogMs = nowMs
-          LogUtils.i(
-            TAG,
-            "[WakeWord] PCM alive (${model.assetDir}): decoded=$pcmChunksDecoded musicSkip=$pcmChunksSkippedMusic " +
-              "drops=$pcmQueueDrops staleSkip=$pcmStaleSkipped peak=$windowPeak/32768"
-          )
-          windowPeak = 0
-        }
         while (spotter.isReady(st)) {
           spotter.decode(st)
           val result = spotter.getResult(st)

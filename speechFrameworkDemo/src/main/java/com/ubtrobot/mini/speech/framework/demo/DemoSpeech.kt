@@ -144,6 +144,7 @@ object DemoSpeech : SpeechModuleFactory() {
     }
 
     fun init(service: MasterSystemService?) {
+        XiaozhiDns.init(appContext)
         XiaozhiMqttConfigStore.init(appContext)
         SelfControlStore.init(appContext)
         SelfControlHttpServer.setOnIdentityChanged { applyDeviceIdentityFromSelfControl() }
