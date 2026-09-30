@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Mini Live — __DEVICE_ID__</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; background: #111; color: #eee; }
+    h1 { font-size: 1.1em; margin: 0 0 10px; }
+    img { width: 100%; max-height: 50vh; object-fit: contain; background: #000; border-radius: 8px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    button { flex: 1; min-width: 110px; padding: 12px; border: 0; border-radius: 8px; font-weight: 700; }
+    .on { background: #27ae60; color: #fff; }
+    .off { background: #c0392b; color: #fff; }
+    .live { background: #8e44ad; color: #fff; }
+    .status { margin-top: 10px; font-size: 0.85em; color: #aaa; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>📹 Mini Live · __DEVICE_ID__</h1>
+  <img id="cam" alt="cam">
+  <div class="row">
+    <button class="live" id="btnCall" onclick="toggleCall()">▶ Đàm thoại</button>
+  </div>
+  <div class="row">
+    <button class="on" id="btnPhone" onclick="togglePhone()">Mic ĐT: Bật</button>
+    <button class="on" id="btnRobot" onclick="toggleRobot()">Mic robot: Bật</button>
+  </div>
+  <div class="status" id="st">Đang kết nối relay…</div>
+<script>
+const DEVICE = '__DEVICE_ID__';
+const TYPE_JPEG = 1, TYPE_PCM_ROBOT = 2, TYPE_PCM_PHONE = 3;
+let ws, audioCtx, micStream, micProc, nextPlay = 0;
+let phoneMuted = false, robotMuted = false, talking = false;
+
+function wsUrl() {
+  const p = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return p + '//' + location.host + '/phone/' + DEVICE;
+}
+
+function connect() {
+  ws = new WebSocket(wsUrl());
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { document.getElementById('st').textContent = '🟢 Relay OK — chờ robot…'; };
+  ws.onclose = () => {
+    document.getElementById('st').textContent = '⚪ Mất kết nối — thử lại sau 2s';
+    setTimeout(connect, 2000);
+  };
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === 'string') {
+      try {
+        const o = JSON.parse(ev.data);
+        if (o.type === 'hello' || o.type === 'mute') {
+          if (typeof o.phone_tx_muted === 'boolean') phoneMuted = o.phone_tx_muted;
+          if (typeof o.robot_tx_muted === 'boolean') robotMuted = o.robot_tx_muted;
+          paintMute();
+          document.getElementById('st').textContent = '🟢 Robot online';
+        }
+      } catch (_) {}
+      return;
+    }
+    const u8 = new Uint8Array(ev.data);
+    if (u8.length < 2) return;
+    const type = u8[0];
+    const payload = u8.subarray(1);
+    if (type === TYPE_JPEG) {
+      const blob = new Blob([payload], { type: 'image/jpeg' });
+      document.getElementById('cam').src = URL.createObjectURL(blob);
+    } else if (type === TYPE_PCM_ROBOT && talking && !robotMuted) {
+      playPcm(payload);
+    }
+  };
+}
+
+function paintMute() {
+  const bp = document.getElementById('btnPhone');
+  const br = document.getElementById('btnRobot');
+  bp.textContent = phoneMuted ? 'Mic ĐT: Tắt' : 'Mic ĐT: Bật';
+  br.textContent = robotMuted ? 'Mic robot: Tắt' : 'Mic robot: Bật';
+  bp.className = phoneMuted ? 'off' : 'on';
+  br.className = robotMuted ? 'off' : 'on';
+}
+
+function sendMute() {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'mute', phone_tx_muted: phoneMuted, robot_tx_muted: robotMuted }));
+  }
+}
+function togglePhone() { phoneMuted = !phoneMuted; paintMute(); sendMute(); }
+function toggleRobot() { robotMuted = !robotMuted; paintMute(); sendMute(); }
+
+async function toggleCall() {
+  if (talking) { stopCall(); return; }
+  talking = true;
+  document.getElementById('btnCall').textContent = '⏹ Ngắt';
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  await audioCtx.resume();
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true } });
+  const src = audioCtx.createMediaStreamSource(micStream);
+  micProc = audioCtx.createScriptProcessor(1024, 1, 1);
+  micProc.onaudioprocess = (ev) => {
+    if (phoneMuted || !ws || ws.readyState !== 1) return;
+    const f = ev.inputBuffer.getChannelData(0);
+    const pcm = new ArrayBuffer(f.length * 2);
+    const v = new DataView(pcm);
+    for (let i = 0; i < f.length; i++) {
+      let s = Math.max(-1, Math.min(1, f[i]));
+      v.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    const packet = new Uint8Array(1 + pcm.byteLength);
+    packet[0] = TYPE_PCM_PHONE;
+    packet.set(new Uint8Array(pcm), 1);
+    ws.send(packet);
+  };
+  src.connect(micProc);
+  const silent = audioCtx.createGain();
+  silent.gain.value = 0;
+  micProc.connect(silent);
+  silent.connect(audioCtx.destination);
+}
+
+function stopCall() {
+  talking = false;
+  document.getElementById('btnCall').textContent = '▶ Đàm thoại';
+  try { micProc && micProc.disconnect(); } catch (_) {}
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  micStream = null;
+  try { audioCtx && audioCtx.close(); } catch (_) {}
+  audioCtx = null;
+}
+
+function playPcm(bytes) {
+  if (!audioCtx) return;
+  const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
+  const f32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768;
+  const buf = audioCtx.createBuffer(1, f32.length, 16000);
+  buf.copyToChannel(f32, 0);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  if (nextPlay < now) nextPlay = now;
+  src.start(nextPlay);
+  nextPlay += buf.duration;
+}
+
+connect();
+</script>
+</body>
+</html>

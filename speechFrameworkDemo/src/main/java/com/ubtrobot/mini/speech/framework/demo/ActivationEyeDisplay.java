@@ -16,6 +16,12 @@ import com.ubtrobot.commons.Priority;
 import com.ubtrobot.express.ExpressApi;
 import com.ubtrobot.express.listeners.AnimationListener;
 import com.ubtrobot.eyescreen.EyeScreenApi;
+import com.ubtrobot.master.Master;
+import com.ubtrobot.master.competition.ActivateCallback;
+import com.ubtrobot.master.competition.ActivateException;
+import com.ubtrobot.master.competition.ActivateOption;
+import com.ubtrobot.master.competition.CompetingItem;
+import com.ubtrobot.master.competition.CompetitionSession;
 
 import java.net.Inet4Address;
 import java.net.InetAddress;
@@ -63,7 +69,18 @@ public class ActivationEyeDisplay {
   /** Chống blink hệ thống đè QR — reclaim nhanh hơn chu kỳ chớp mắt. */
   private static final long QR_RECLAIM_MS = 400L;
   private static final long WIFI_STATUS_HOLD_MS = 5_000L;
+  /** Frame "đang bắt" đang vẽ lại không được đè lên icon OK/FAIL vừa hiện. */
+  private static final Object WIFI_ICON_LOCK = new Object();
   private static final long PAUSE_AFTER_DIGIT_MS = 400L;
+
+  /**
+   * master.policy phát express idle (w_basic_*) ở priority NORMAL(2) mỗi khi eye-all rảnh —
+   * kể cả ngay sau stopExpress → QR chớp. Giữ session eye-all ở HIGH(3) để chặn.
+   */
+  private static final int EYE_HOLD_PRIORITY = 3;
+  private static final Object EYE_HOLD_LOCK = new Object();
+  private static CompetitionSession eyeHoldSession;
+  private static int eyeHoldOwnerEpoch = -1;
 
   /** Tăng khi có nội dung mắt mới → hủy sleep QR / hold cũ. */
   private static final AtomicInteger eyeEpoch = new AtomicInteger(0);
@@ -376,7 +393,7 @@ public class ActivationEyeDisplay {
         drawOneEye(api, right, EYE_BOTH, "BOTH-QR");
       }
       Log.i(TAG, "Self-Control put bitmaps – hold " + (SELF_CONTROL_HOLD_MS / 1000)
-          + "s (chống blink: stopExpress + redraw ~400ms)");
+          + "s (giữ eye-all HIGH + redraw ~400ms)");
 
       // Blink/express hệ thống đè bitmap → QR “chớp theo”. Reclaim nhanh, không đợi 2.5s.
       holdQrAgainstBlink(epoch, api, left, right);
@@ -463,20 +480,87 @@ public class ActivationEyeDisplay {
   }
 
   /**
-   * Giữ QR ổn định: mỗi {@link #QR_RECLAIM_MS} stopExpress rồi vẽ lại L/R
-   * (blink ROM đè bitmap → QR chớp theo nếu reclaim chậm).
+   * Giữ QR ổn định: giữ session eye-all để master.policy không phát w_basic đè,
+   * và vẽ lại L/R mỗi {@link #QR_RECLAIM_MS}.
    */
+  private static void acquireEyeHold(int epoch) {
+    synchronized (EYE_HOLD_LOCK) {
+      eyeHoldOwnerEpoch = epoch;
+      if (eyeHoldSession != null && eyeHoldSession.isActive()) return;
+      try {
+        CompetitionSession s = Master.get().getGlobalContext().openCompetitionSession()
+            .addCompeting(() -> Collections.singletonList(new CompetingItem("express", "eye-all")))
+            .setActivateOption(new ActivateOption.Builder()
+                .setPriority(EYE_HOLD_PRIORITY)
+                .setShouldResume(false)
+                .build());
+        eyeHoldSession = s;
+        s.activate(new ActivateCallback() {
+          @Override
+          public void onSuccess(String sessionId) {
+            Log.i(TAG, "eye-all hold active session=" + sessionId);
+          }
+
+          @Override
+          public void onFailure(ActivateException e) {
+            Log.w(TAG, "eye-all hold activate fail: " + e);
+          }
+        });
+      } catch (Throwable t) {
+        eyeHoldSession = null;
+        Log.w(TAG, "eye-all hold open fail: " + t.getMessage());
+      }
+    }
+  }
+
+  private static boolean isEyeHoldActive() {
+    synchronized (EYE_HOLD_LOCK) {
+      try {
+        return eyeHoldSession != null && eyeHoldSession.isActive();
+      } catch (Throwable t) {
+        return false;
+      }
+    }
+  }
+
+  /** Chỉ nhả nếu flow {@code epoch} vẫn là chủ hold (flow QR/Wi‑Fi mới hơn đã nhận lại thì giữ). */
+  private static void releaseEyeHold(int epoch) {
+    synchronized (EYE_HOLD_LOCK) {
+      if (eyeHoldOwnerEpoch != epoch || eyeHoldSession == null) return;
+      try {
+        eyeHoldSession.deactivate();
+      } catch (Throwable t) {
+        Log.w(TAG, "eye-all hold deactivate fail: " + t.getMessage());
+      }
+      eyeHoldSession = null;
+      eyeHoldOwnerEpoch = -1;
+      Log.i(TAG, "eye-all hold released");
+    }
+  }
+
   private static void holdQrAgainstBlink(int epoch, EyeScreenApi api, Bitmap left, Bitmap right) {
     long holdEnd = System.currentTimeMillis() + SELF_CONTROL_HOLD_MS;
+    acquireEyeHold(epoch);
+    try {
+      holdQrLoop(epoch, api, left, right, holdEnd);
+    } finally {
+      releaseEyeHold(epoch);
+    }
+  }
+
+  private static void holdQrLoop(int epoch, EyeScreenApi api, Bitmap left, Bitmap right, long holdEnd) {
     while (System.currentTimeMillis() < holdEnd && eyeEpoch.get() == epoch) {
       long slice = Math.min(QR_RECLAIM_MS, holdEnd - System.currentTimeMillis());
       if (slice <= 0) break;
       sleepWhileEpoch(epoch, slice);
       if (eyeEpoch.get() != epoch) break;
       if (System.currentTimeMillis() >= holdEnd) break;
-      try {
-        ExpressApi.get().stopExpress();
-      } catch (Exception ignored) {
+      // stopExpress nhả eye-all → master.policy phát w_basic ngay; chỉ dùng khi không giữ được session.
+      if (!isEyeHoldActive()) {
+        try {
+          ExpressApi.get().stopExpress();
+        } catch (Exception ignored) {
+        }
       }
       if (eyeEpoch.get() != epoch) break;
       // Vẽ im (không spam log mỗi 400ms).
@@ -508,7 +592,10 @@ public class ActivationEyeDisplay {
     showSelfControlIpAndQr(ip, url);
   }
 
-  /** Portal đã gửi SSID/pass → force logo bắt Wi‑Fi (nhấp nháy) đến khi OK/FAIL. */
+  /**
+   * Portal đã gửi SSID/pass → icon "ĐANG BẮT WIFI" đứng yên đến khi OK/FAIL.
+   * Vẽ lại cùng frame mỗi {@link #QR_RECLAIM_MS} để blink ROM không đè (không chớp đen).
+   */
   public static void showWifiConnecting(String ssid) {
     String label = (ssid == null || ssid.isEmpty()) ? "WIFI..." : ssid;
     if (label.length() > 12) label = label.substring(0, 11) + "…";
@@ -516,49 +603,70 @@ public class ActivationEyeDisplay {
     qrShowing.set(false);
     final int epoch = eyeEpoch.incrementAndGet();
     playing.set(true);
-    Log.i(TAG, "showWifiConnecting blink epoch=" + epoch + " ssid=" + label);
+    Log.i(TAG, "showWifiConnecting static epoch=" + epoch + " ssid=" + label);
     new Thread(() -> {
-      Bitmap on = null;
-      Bitmap off = null;
+      Bitmap frame = null;
       try {
-        on = renderWifiStatusBitmap(/*ok*/ null, "BẮT WIFI");
-        off = Bitmap.createBitmap(EYE_W, EYE_H, Bitmap.Config.ARGB_8888);
-        new Canvas(off).drawColor(Color.BLACK);
-        boolean lit = true;
+        frame = renderWifiStatusBitmap(/*ok*/ null, "ĐANG BẮT WIFI");
+        EyeScreenApi api = EyeScreenApi.get();
+        try {
+          ExpressApi.get().stopExpress();
+        } catch (Exception ignored) {
+        }
+        acquireEyeHold(epoch);
+        showBitmapOnBothEyesNoSleep(frame);
         while (eyeEpoch.get() == epoch) {
-          showBitmapOnBothEyesNoSleep(lit ? on : off);
-          lit = !lit;
-          sleepWhileEpoch(epoch, 380);
+          sleepWhileEpoch(epoch, QR_RECLAIM_MS);
+          if (eyeEpoch.get() != epoch) break;
+          if (!isEyeHoldActive()) {
+            try {
+              ExpressApi.get().stopExpress();
+            } catch (Exception ignored) {
+            }
+          }
+          synchronized (WIFI_ICON_LOCK) {
+            if (eyeEpoch.get() != epoch) break;
+            try {
+              api.drawBitmap(frame, EYE_LEFT);
+              api.drawBitmap(frame, EYE_RIGHT);
+            } catch (Exception ignored) {
+            }
+          }
         }
       } catch (Exception e) {
-        Log.e(TAG, "showWifiConnecting blink: " + e.getMessage(), e);
+        Log.e(TAG, "showWifiConnecting: " + e.getMessage(), e);
       } finally {
-        if (on != null && !on.isRecycled()) on.recycle();
-        if (off != null && !off.isRecycled()) off.recycle();
+        releaseEyeHold(epoch);
+        if (frame != null && !frame.isRecycled()) frame.recycle();
       }
-    }, "WifiConnectingBlink").start();
+    }, "WifiConnectingIcon").start();
   }
 
   /** Nối Wi‑Fi nhà thành công — icon Wi‑Fi + tick xanh. */
   public static void showWifiOk() {
     notifyUi("Wi‑Fi OK");
-    forceShowStatusBitmap(renderWifiStatusBitmap(Boolean.TRUE, "OK"), WIFI_STATUS_HOLD_MS);
+    forceShowStatusBitmap(renderWifiStatusBitmap(Boolean.TRUE, "THÀNH CÔNG"), WIFI_STATUS_HOLD_MS);
   }
 
   /** Sai mật khẩu / không nối được — icon Wi‑Fi + X đỏ. */
   public static void showWifiFail() {
     notifyUi("Wi‑Fi FAIL");
-    forceShowStatusBitmap(renderWifiStatusBitmap(Boolean.FALSE, "FAIL"), WIFI_STATUS_HOLD_MS);
+    forceShowStatusBitmap(renderWifiStatusBitmap(Boolean.FALSE, "THẤT BẠI"), WIFI_STATUS_HOLD_MS);
   }
 
   private static void forceShowStatusBitmap(Bitmap bmp, long holdMs) {
     qrShowing.set(false); // Wi‑Fi status đè QR
-    final int epoch = eyeEpoch.incrementAndGet();
+    final int epoch;
+    synchronized (WIFI_ICON_LOCK) {
+      epoch = eyeEpoch.incrementAndGet();
+    }
     playing.set(true);
     try {
+      if (holdMs > 0) acquireEyeHold(epoch);
       showBitmapOnBothEyesNoSleep(bmp);
       if (holdMs > 0) {
         sleepWhileEpoch(epoch, holdMs);
+        releaseEyeHold(epoch);
         if (eyeEpoch.get() == epoch) {
           restoreNormalEyes();
         }
@@ -567,6 +675,7 @@ public class ActivationEyeDisplay {
     } catch (Exception e) {
       Log.e(TAG, "forceShowStatusBitmap: " + e.getMessage(), e);
     } finally {
+      if (holdMs > 0) releaseEyeHold(epoch);
       if (bmp != null && !bmp.isRecycled()) bmp.recycle();
       if (holdMs > 0 && eyeEpoch.get() == epoch) {
         playing.set(false);
@@ -1402,7 +1511,7 @@ public class ActivationEyeDisplay {
   }
 
   private static void notifyUi(String text) {
-    CodeDisplayListener listener = uiListener;
+    CodeDisplayListener list  ener = uiListener;
     if (listener != null) {
       listener.onCodeReceived(text);
     }

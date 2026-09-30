@@ -1,216 +1,332 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
-    <title>Mini Self Control</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, sans-serif; background: #f4f6f8; color: #333; padding: 16px; }
-        h1 { font-size: 1.4em; text-align: center; margin-bottom: 16px; color: #2c3e50; }
-        .card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-        .card h2 { font-size: 1.1em; margin-bottom: 10px; color: #34495e; border-bottom: 2px solid #3498db; padding-bottom: 6px; }
-        label { display: block; margin: 6px 0; cursor: pointer; }
-        input[type="text"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
-        input[type="radio"] { margin-right: 8px; }
-        .unit-grid { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 8px; }
-        .unit-grid label { display: flex; align-items: flex-start; gap: 8px; padding: 10px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef; line-height: 1.35; }
-        .unit-grid label.checked { background: #d4edda; border-color: #28a745; }
-        .unit-grid input[type="radio"] { width: 18px; height: 18px; flex-shrink: 0; margin-top: 2px; }
-        .course-label { padding: 8px 12px; border-radius: 6px; margin: 4px 0; display: flex; align-items: center; }
-        .course-label.selected { background: #d6eaf8; font-weight: bold; }
-        .course-name { font-weight: bold; }
-        .btn { display: block; width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 1.1em; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        .btn-save { background: #28a745; color: #fff; }
-        .btn-save:hover { background: #218838; }
-        .btn-save:disabled { background: #ccc; cursor: not-allowed; }
-        .btn-dismiss-qr { background: #e67e22; color: #fff; }
-        .btn-dismiss-qr:hover { background: #d35400; }
-        .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: #fff; padding: 12px 24px; border-radius: 8px; opacity: 0; transition: opacity 0.3s; z-index: 999; }
-        .toast.show { opacity: 1; }
-        .status { text-align: center; font-size: 0.9em; color: #888; margin-top: 8px; }
-        .no-units { color: #999; font-style: italic; padding: 10px 0; }
-        .course-mac { color: #888; font-weight: normal; font-size: 0.9em; margin-left: 6px; }
-        #custom_mac[readonly] { background: #f0f0f0; color: #555; }
-        .mac-hint { color: #666; font-size: 0.85em; margin-top: 8px; line-height: 1.4; }
-        .device-id { font-family: monospace; background: #eef6ff; padding: 8px 10px; border-radius: 6px; margin-top: 8px; word-break: break-all; }
-        .active-lesson { font-family: inherit; background: #e8f8ef; border: 1px solid #28a745; color: #1e7e34; padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; line-height: 1.4; font-weight: bold; }
-        .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-        .tab-btn { flex: 1 1 40%; min-width: 110px; padding: 10px 6px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; font-weight: bold; color: #555; cursor: pointer; font-size: 0.9em; }
-        .tab-btn.active { background: #3498db; color: #fff; border-color: #3498db; }
-        .tab-panel { display: none; }
-        .tab-panel.active { display: block; }
-        .settings-block { background: #fff; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow: hidden; border: 1px solid #e9ecef; }
-        .settings-block-head { padding: 14px 16px; font-weight: bold; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; }
-        .settings-block-head:hover { background: #f8fafc; }
-        .settings-block.open .settings-block-head { background: #eaf4fc; border-bottom: 1px solid #d6eaf8; }
-        .settings-block-body { display: none; padding: 14px 16px 16px; }
-        .settings-block.open .settings-block-body { display: block; }
-        .settings-chevron { color: #888; font-size: 0.9em; }
-        .settings-hint { color: #666; font-size: 0.85em; margin: 8px 0 12px; line-height: 1.4; }
-        .btn-settings-save { background: #3498db; color: #fff; margin-top: 8px; }
-        .btn-settings-save:hover { background: #2980b9; }
-        .try-toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
-        .try-toolbar input[type="search"] { flex: 1; min-width: 140px; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 1em; }
-        .btn-stop { background: #c0392b; color: #fff; width: auto; padding: 10px 14px; margin-top: 0; }
-        .btn-stop:hover { background: #a93226; }
-        .try-section-title { font-size: 0.95em; font-weight: bold; color: #2c3e50; margin: 14px 0 8px; }
-        .try-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .try-btn { padding: 10px 8px; font-size: 0.82em; line-height: 1.25; background: #ecf0f1; border: 1px solid #bdc3c7; border-radius: 8px; text-align: left; word-break: break-word; cursor: pointer; color: #2c3e50; font-weight: 600; }
-        .try-btn:active, .try-btn.busy { background: #3498db; color: #fff; border-color: #2980b9; }
-        .try-btn.dance { background: #fdebd0; border-color: #f5b041; }
-        .try-btn.dance:active, .try-btn.dance.busy { background: #e67e22; color: #fff; border-color: #d35400; }
-        .try-btn.express { background: #e8f6f3; border-color: #76d7c4; }
-        .try-btn.express:active, .try-btn.express.busy { background: #16a085; color: #fff; }
-        .try-meta { font-size: 0.85em; color: #888; margin-bottom: 8px; }
-        .try-empty { color: #999; font-style: italic; padding: 12px 0; }
-    </style>
+    <title>Mini Self Control</title>
+    <link rel="stylesheet" href="/self_control.css">
+    <script src="/self_control_i18n.js"></script>
 </head>
 <body>
-    <h1>🤖 Mini Self Control</h1>
     <div id="toast" class="toast"></div>
 
-    <div class="tabs">
-        <button type="button" class="tab-btn active" id="tab_btn_student" onclick="switchTab('student')">📚 Học viên</button>
-        <button type="button" class="tab-btn" id="tab_btn_robot" onclick="switchTab('robot')">⚙️ Cài đặt</button>
-        <button type="button" class="tab-btn" id="tab_btn_actions" onclick="switchTab('actions')">🕺 Hành động</button>
-        <button type="button" class="tab-btn" id="tab_btn_express" onclick="switchTab('express')">👀 Biểu cảm</button>
-    </div>
-
-    <div class="tab-panel active" id="tab_student">
-    <div class="active-lesson" id="active_lesson">Đang học: …</div>
-
-    <!-- Tên học viên -->
-    <div class="card">
-        <h2>👤 Tên học viên</h2>
-        <input type="text" id="student_name" placeholder="Nhập tên học viên...">
-    </div>
-
-    <!-- Chọn cấp độ -->
-    <div class="card">
-        <h2>📚 Cấp độ học</h2>
-        <div id="course_list"></div>
-    </div>
-
-    <!-- MAC / Device-Id (giống hotspot) -->
-    <div class="card">
-        <h2>🔑 Địa chỉ MAC (Device-Id)</h2>
-        <input type="text" id="custom_mac" placeholder="aa:bb:cc:dd:ee:ff" autocomplete="off" spellcheck="false">
-        <p class="mac-hint" id="mac_hint">Explorers / YI / FL / IELTS / TOEIC / Giao tiếp hằng ngày: random MAC theo giọng hoặc pool. Tự cấu hình: để trống = MAC chip. Tự nhập MAC: gõ rồi Lưu.</p>
-        <div class="device-id" id="device_id_view">Device-Id đang dùng: ...</div>
-    </div>
-
-    <div class="card" id="ex_voice_card" style="display: none;">
-        <h2>🗣️ Giọng Explorers</h2>
-        <div id="ex_voice_list"></div>
-        <p class="mac-hint">Đổi giọng sẽ random MAC trong pool tương ứng và đổi Device-Id.</p>
-    </div>
-    <div class="card" id="yi_voice_card" style="display: none;">
-        <h2>🗣️ Giọng Young Innovators</h2>
-        <div id="yi_voice_list"></div>
-        <p class="mac-hint">Chọn Việt / Anh riêng; đổi giọng sẽ random MAC pool và đổi Device-Id.</p>
-    </div>
-    <div class="card" id="fl_voice_card" style="display: none;">
-        <h2>🗣️ Giọng Future Leaders</h2>
-        <div id="fl_voice_list"></div>
-        <p class="mac-hint">Chọn Việt / Anh riêng; đổi giọng sẽ random MAC pool và đổi Device-Id.</p>
-    </div>
-    <div class="card" id="ielts_voice_card" style="display: none;">
-        <h2>🗣️ Giọng IELTS</h2>
-        <div id="ielts_voice_list"></div>
-        <p class="mac-hint">Chọn Việt / Anh riêng; đổi giọng sẽ random MAC pool và đổi Device-Id.</p>
-    </div>
-    <div class="card" id="toeic_voice_card" style="display: none;">
-        <h2>🗣️ Giọng TOEIC</h2>
-        <div id="toeic_voice_list"></div>
-        <p class="mac-hint">Chọn Việt / Anh riêng; đổi giọng sẽ random MAC pool và đổi Device-Id.</p>
-    </div>
-
-    <!-- Chọn sách / cấp độ con (Explorers, Young Innovators, ...) -->
-    <div class="card" id="sub_card" style="display: none;">
-        <h2 id="sub_card_title">📗 Sách / cấp độ con</h2>
-        <div id="sub_list"></div>
-    </div>
-    <div class="card" id="unit_card">
-        <h2>📖 Chọn Unit — <span id="current_course_name">...</span></h2>
-        <div id="unit_list"></div>
-    </div>
-
-    <!-- Nút lưu (tab học viên) -->
-    <button class="btn btn-dismiss-qr" id="btn_dismiss_qr" onclick="dismissQr()">📴 Tắt mã QR trên mắt</button>
-    <button class="btn btn-save" id="btn_save" onclick="saveConfig()">💾 Lưu cấu hình</button>
-    <div class="status" id="status"></div>
-    </div><!-- /tab_student -->
-
-    <div class="tab-panel" id="tab_robot">
-        <p class="settings-hint">Chọn một khối bên dưới để mở phần cài đặt tương ứng.</p>
-
-        <div class="settings-block" id="block_music_server">
-            <div class="settings-block-head" onclick="toggleSettingsBlock('block_music_server')">
-                <span>🎵 Server nhạc</span>
-                <span class="settings-chevron">▼</span>
+    <header class="site-header">
+        <div class="header-brand-row">
+            <div class="brand">
+                <div class="brand-mark" aria-hidden="true">🤖</div>
             </div>
-            <div class="settings-block-body">
-                <p class="settings-hint">
-                    Robot tìm bài và stream MP3 từ server này (API kiểu kytuoi:
-                    <code>/api/search</code>, <code>/api/stream/mp3</code>).
-                    Mặc định: <code>https://youtube.kytuoi.com</code>
-                </p>
-                <label for="music_server_url">URL server nhạc</label>
-                <input type="text" id="music_server_url" placeholder="https://youtube.kytuoi.com" autocomplete="off" spellcheck="false">
-                <button type="button" class="btn btn-settings-save" id="btn_save_music" onclick="saveMusicServer()">💾 Lưu server nhạc</button>
-                <button type="button" class="btn btn-dismiss-qr" style="margin-top:8px" onclick="resetMusicServer()">↺ Về mặc định (kytuoi)</button>
+            <button type="button" id="navBurger" class="nav-burger" aria-label="Menu" aria-expanded="false">
+                <span class="nav-burger-line"></span><span class="nav-burger-line"></span><span class="nav-burger-line"></span>
+            </button>
+        </div>
+        <div class="header-title-row">
+            <h1 data-i18n="header.title">Cài đặt robot</h1>
+            <label class="ui-lang-wrap" for="uiLangSelect">
+                <span class="ui-lang-label" data-i18n="lang.label">Ngôn ngữ</span>
+                <select id="uiLangSelect" aria-label="Language">
+                    <option value="vi">Tiếng Việt</option>
+                    <option value="en">English</option>
+                    <option value="zh">中文</option>
+                    <option value="it">Italiano</option>
+                </select>
+            </label>
+        </div>
+    </header>
+
+    <div id="navBackdrop" class="nav-backdrop" hidden></div>
+    <aside id="navDrawer" class="nav-drawer" aria-hidden="true">
+        <div class="nav-drawer-head">
+            <div class="nav-drawer-brand">
+                <div class="brand-mark" style="width:40px;height:40px;font-size:18px">🤖</div>
+                <div class="nav-drawer-hello">
+                    <span class="nav-drawer-hello-sub">Xin chào!</span>
+                    <span class="nav-drawer-hello-name">Mini</span>
+                </div>
+            </div>
+            <button type="button" id="navDrawerClose" class="nav-drawer-close" aria-label="Close">&times;</button>
+        </div>
+        <nav class="nav-drawer-list">
+            <button type="button" class="active" id="drawer_btn_botsettings" onclick="switchTab('botsettings')" data-i18n="nav.botsettings">Cài đặt bot</button>
+            <button type="button" id="drawer_btn_live" onclick="switchTab('live')" data-i18n="nav.live">Live</button>
+            <button type="button" id="drawer_btn_actions" onclick="switchTab('actions')" data-i18n="nav.actions">Hành động</button>
+            <button type="button" id="drawer_btn_express" onclick="switchTab('express')" data-i18n="nav.express">Biểu cảm</button>
+            <button type="button" id="drawer_btn_games" onclick="location.href='/games/'">🎮 Trò chơi</button>
+        </nav>
+    </aside>
+
+    <nav class="site-nav" aria-label="Sections">
+        <div class="tabs" role="tablist">
+            <button type="button" class="active" id="tab_btn_botsettings" onclick="switchTab('botsettings')" data-i18n="nav.botsettings">Cài đặt bot</button>
+            <button type="button" id="tab_btn_live" onclick="switchTab('live')" data-i18n="nav.live">Live</button>
+            <button type="button" id="tab_btn_actions" onclick="switchTab('actions')" data-i18n="nav.actions">Hành động</button>
+            <button type="button" id="tab_btn_express" onclick="switchTab('express')" data-i18n="nav.express">Biểu cảm</button>
+            <button type="button" id="tab_btn_games" onclick="location.href='/games/'">🎮 Trò chơi</button>
+        </div>
+    </nav>
+
+    <div class="tab-panel active" id="tab_botsettings">
+        <h2 data-i18n="bot.h2">Cài đặt bot</h2>
+        <p class="bot-intro" data-i18n="bot.intro">Chọn một mục bên dưới.</p>
+        <div class="active-lesson" id="active_lesson">Đang học: …</div>
+        <div class="pair-box" id="pair_box" style="display:none"></div>
+
+        <div id="bot_back_wrap" style="display:none;text-align:left">
+            <button type="button" class="bot-back" onclick="hideBotSections()" data-i18n="bot.back">← Quay lại</button>
+        </div>
+
+        <div class="bot-nav" id="bot_nav_grid">
+            <button type="button" class="bot-nav-item" data-section="bot-student" onclick="showBotSection('bot-student')"><span class="bot-ico">👤</span><span data-i18n="bot.student">Học viên</span></button>
+            <button type="button" class="bot-nav-item" data-section="bot-course" onclick="showBotSection('bot-course')"><span class="bot-ico">📚</span><span data-i18n="bot.course">Cấp độ học</span></button>
+            <button type="button" class="bot-nav-item" data-section="bot-mac" onclick="showBotSection('bot-mac')"><span class="bot-ico">🔑</span><span data-i18n="bot.mac">MAC / Device-Id</span></button>
+            <button type="button" class="bot-nav-item" data-section="bot-voice" onclick="showBotSection('bot-voice')"><span class="bot-ico">🗣️</span><span data-i18n="bot.voice">Giọng</span></button>
+            <button type="button" class="bot-nav-item" data-section="bot-unit" onclick="showBotSection('bot-unit')"><span class="bot-ico">📖</span><span data-i18n="bot.unit">Unit</span></button>
+            <button type="button" class="bot-nav-item" data-section="bot-music" onclick="showBotSection('bot-music')"><span class="bot-ico">🎵</span><span data-i18n="bot.music">Server nhạc</span></button>
+        </div>
+        <hr class="smallhr">
+
+        <div id="bot-student" class="bot-section">
+            <h3>👤 <span data-i18n="bot.student">Học viên</span></h3>
+            <div class="help-box"><strong data-i18n="common.howto">Cách dùng</strong><ol><li>Nhập tên học viên rồi Lưu cấu hình.</li></ol></div>
+            <input type="text" id="student_name" placeholder="Nhập tên học viên...">
+            <button class="btn btn-dismiss-qr" id="btn_dismiss_qr" onclick="dismissQr()" data-i18n="bot.qr">📴 Tắt mã QR</button>
+            <button class="btn btn-save" id="btn_save" onclick="saveConfig()" data-i18n="bot.save">💾 Lưu cấu hình</button>
+            <div class="status" id="status"></div>
+        </div>
+
+        <div id="bot-course" class="bot-section">
+            <h3>📚 <span data-i18n="bot.course">Cấp độ học</span></h3>
+            <div id="course_list"></div>
+            <div id="sub_card" style="display:none;margin-top:12px">
+                <h4 id="sub_card_title">📗 Sách / cấp độ con</h4>
+                <div id="sub_list"></div>
+            </div>
+            <button class="btn btn-save" onclick="saveConfig()" data-i18n="bot.save">💾 Lưu cấu hình</button>
+        </div>
+
+        <div id="bot-mac" class="bot-section">
+            <h3>🔑 <span data-i18n="bot.mac">MAC / Device-Id</span></h3>
+            <input type="text" id="custom_mac" placeholder="aa:bb:cc:dd:ee:ff" autocomplete="off" spellcheck="false">
+            <p class="mac-hint" id="mac_hint">Explorers / YI / FL / IELTS / TOEIC / Giao tiếp hằng ngày: random MAC theo giọng hoặc pool.</p>
+            <div class="device-id" id="device_id_view">Device-Id đang dùng: ...</div>
+            <button class="btn btn-save" onclick="saveConfig()" data-i18n="bot.save">💾 Lưu cấu hình</button>
+        </div>
+
+        <div id="bot-voice" class="bot-section">
+            <h3>🗣️ <span data-i18n="bot.voice">Giọng</span></h3>
+            <div id="ex_voice_card" style="display:none"><h4>Explorers</h4><div id="ex_voice_list"></div></div>
+            <div id="yi_voice_card" style="display:none"><h4>Young Innovators</h4><div id="yi_voice_list"></div></div>
+            <div id="fl_voice_card" style="display:none"><h4>Future Leaders</h4><div id="fl_voice_list"></div></div>
+            <div id="ielts_voice_card" style="display:none"><h4>IELTS</h4><div id="ielts_voice_list"></div></div>
+            <div id="toeic_voice_card" style="display:none"><h4>TOEIC</h4><div id="toeic_voice_list"></div></div>
+            <button class="btn btn-save" onclick="saveConfig()" data-i18n="bot.save">💾 Lưu cấu hình</button>
+        </div>
+
+        <div id="bot-unit" class="bot-section">
+            <h3>📖 <span data-i18n="bot.unit">Unit</span> — <span id="current_course_name">...</span></h3>
+            <div id="unit_card"><div id="unit_list"></div></div>
+            <button class="btn btn-save" onclick="saveConfig()" data-i18n="bot.save">💾 Lưu cấu hình</button>
+        </div>
+
+        <div id="bot-music" class="bot-section">
+            <h3>🎵 <span data-i18n="bot.music">Server nhạc</span></h3>
+            <div class="help-box"><strong data-i18n="common.howto">Cách dùng</strong><ol><li>Nhập URL server nhạc rồi Lưu.</li><li>Mặc định: youtube.kytuoi.com</li></ol></div>
+            <label for="music_server_url">URL</label>
+            <input type="text" id="music_server_url" placeholder="https://youtube.kytuoi.com" autocomplete="off" spellcheck="false">
+            <button type="button" class="btn btn-settings-save" id="btn_save_music" onclick="saveMusicServer()">💾 Lưu server nhạc</button>
+            <button type="button" class="btn btn-dismiss-qr" style="margin-top:8px" onclick="resetMusicServer()">↺ Về mặc định</button>
+        </div>
+    </div>
+
+    <div class="tab-panel" id="tab_live">
+        <h2 data-i18n="live.h2">Điều khiển</h2>
+        <div class="help-box">
+            <strong data-i18n="common.howto">Cách dùng</strong>
+            <ol>
+                <li data-i18n="ctrl.help1">Bấm Chiếm quyền trước — lúc đó mới lái / micro được.</li>
+                <li data-i18n="ctrl.help2">Dùng pad / camera khi đang chiếm quyền. Bật Micro để nói qua loa robot; Nghe robot để nghe mic robot.</li>
+                <li data-i18n="ctrl.help3">Xong thì tắt micro và bấm Nhả quyền.</li>
+                <li data-i18n="ctrl.help4">Muốn điều khiển khác mạng: bật Ngoài mạng → Copy link HTTPS.</li>
+            </ol>
+            <p class="help-warn" data-i18n="ctrl.remote_warn">Link ngoài mạng chỉ tắt khi bạn tắt — ai có link đều điều khiển được.</p>
+        </div>
+        <div id="controlStatus" class="live-status"></div>
+
+        <div class="ctrl-session" role="group" aria-label="Session">
+            <button type="button" id="ctrlAssumeBtn" class="ctrl-seg" onclick="ctrlAssume()" data-i18n="ctrl.assume">Chiếm quyền</button>
+            <button type="button" id="ctrlReleaseBtn" class="ctrl-seg is-active" onclick="ctrlRelease()" data-i18n="ctrl.release">Nhả quyền</button>
+        </div>
+
+        <div class="ctrl-remote-card" id="ctrlRemotePanel">
+            <div class="ctrl-remote-head">
+                <div class="ctrl-remote-title" data-i18n="ctrl.remote">Ngoài mạng</div>
+                <div class="ctrl-remote-sub" data-i18n="ctrl.remote_sub">Tạo link HTTPS Cloudflare (giống wired) — mở thẳng từ 4G, không hỏi IP.</div>
+            </div>
+            <div class="ctrl-session ctrl-remote-toggle" role="group" aria-label="Remote share">
+                <button type="button" id="ctrlRemoteOffBtn" class="ctrl-seg is-active" onclick="ctrlRemoteToggle(false)" data-i18n="ctrl.remote_off">Tắt</button>
+                <button type="button" id="ctrlRemoteOnBtn" class="ctrl-seg" onclick="ctrlRemoteToggle(true)" data-i18n="ctrl.remote_on">Bật link</button>
+            </div>
+            <div id="ctrlRemoteBox" class="ctrl-remote-box" hidden>
+                <div class="ctrl-remote-link-label" data-i18n="ctrl.remote_link">Link điều khiển</div>
+                <div class="ctrl-remote-row">
+                    <input type="text" id="ctrlRemoteURL" readonly placeholder="…" aria-label="Remote control URL">
+                    <button type="button" id="ctrlRemoteCopyBtn" class="ctrl-remote-copy" onclick="ctrlRemoteCopy()" data-i18n="ctrl.remote_copy">Copy</button>
+                </div>
+                <p id="ctrlRemoteStatus" class="ctrl-remote-status"></p>
             </div>
         </div>
-    </div><!-- /tab_robot -->
+
+        <div class="ctrl-stage">
+            <div class="ctrl-stage-cam">
+                <div id="ctrlCamBox" class="ctrl-cam" aria-label="Camera stream">
+                    <img id="live_cam" alt="Camera robot" hidden>
+                    <div id="ctrlCamPlaceholder" class="ctrl-cam-placeholder" data-i18n="ctrl.cam_off">Camera tắt — bật switch bên dưới hoặc Chiếm quyền.</div>
+                </div>
+                <div class="ctrl-switches">
+                    <label class="ctrl-switch" for="ctrlCamSwitch">
+                        <span class="ctrl-switch-text">Camera</span>
+                        <input type="checkbox" id="ctrlCamSwitch" onchange="ctrlCamToggle(this.checked)">
+                        <span class="ctrl-switch-track" aria-hidden="true"><span class="ctrl-switch-thumb"></span></span>
+                    </label>
+                    <label class="ctrl-switch" for="ctrlMicSwitch">
+                        <span class="ctrl-switch-text"><span data-i18n="ctrl.mic">Micro</span></span>
+                        <input type="checkbox" id="ctrlMicSwitch" disabled onchange="ctrlMicToggle(this.checked)">
+                        <span class="ctrl-switch-track" aria-hidden="true"><span class="ctrl-switch-thumb"></span></span>
+                    </label>
+                    <label class="ctrl-switch" for="ctrlListenSwitch">
+                        <span class="ctrl-switch-text"><span data-i18n="ctrl.listen">Nghe robot</span></span>
+                        <input type="checkbox" id="ctrlListenSwitch" disabled onchange="ctrlListenToggle(this.checked)">
+                        <span class="ctrl-switch-track" aria-hidden="true"><span class="ctrl-switch-thumb"></span></span>
+                    </label>
+                </div>
+            </div>
+            <div class="ctrl-stage-pad">
+                <div class="ctrl-grid" id="ctrlGrid">
+                    <button type="button" class="ctrl-btn" disabled onclick="ctrlPadSkill('RAISE_HANDS')" data-i18n="ctrl.lift_up">Giơ tay</button>
+                    <button type="button" class="ctrl-btn" disabled
+                        onpointerdown="ctrlPadHold('GO_AHEAD',event)" onpointerup="ctrlPadStop(event)"
+                        onpointerleave="ctrlPadStop(event)" onpointercancel="ctrlPadStop(event)" data-i18n="ctrl.fwd">Tiến</button>
+                    <button type="button" class="ctrl-btn" disabled onclick="ctrlPadSkill('TILT_HEAD')" data-i18n="ctrl.head_up">Ngẩng</button>
+
+                    <button type="button" class="ctrl-btn" disabled
+                        onpointerdown="ctrlPadHold('TURN_LEFT',event)" onpointerup="ctrlPadStop(event)"
+                        onpointerleave="ctrlPadStop(event)" onpointercancel="ctrlPadStop(event)" data-i18n="ctrl.left">Trái</button>
+                    <button type="button" class="ctrl-btn ctrl-stop" disabled onclick="ctrlStopAll(event)" data-i18n="ctrl.stop">Dừng</button>
+                    <button type="button" class="ctrl-btn" disabled
+                        onpointerdown="ctrlPadHold('TURN_RIGHT',event)" onpointerup="ctrlPadStop(event)"
+                        onpointerleave="ctrlPadStop(event)" onpointercancel="ctrlPadStop(event)" data-i18n="ctrl.right">Phải</button>
+
+                    <button type="button" class="ctrl-btn" disabled onclick="ctrlPadSkill('WAVE_LEFT')" data-i18n="ctrl.lift_dn">Vẫy tay</button>
+                    <button type="button" class="ctrl-btn" disabled
+                        onpointerdown="ctrlPadHold('BACK_UP',event)" onpointerup="ctrlPadStop(event)"
+                        onpointerleave="ctrlPadStop(event)" onpointercancel="ctrlPadStop(event)" data-i18n="ctrl.back">Lùi</button>
+                    <button type="button" class="ctrl-btn" disabled onclick="ctrlPadSkill('SHAKE_HEAD')" data-i18n="ctrl.head_dn">Lắc đầu</button>
+                </div>
+                <p class="ctrl-pad-hint" data-i18n="ctrl.pad_hint">Giữ để chạy — giữa = dừng hết.</p>
+            </div>
+        </div>
+
+        <hr class="smallhr">
+        <details class="ctrl-advanced">
+            <summary data-i18n="live.tunnel">Tunnel relay (nâng cao)</summary>
+            <input type="text" id="tunnel_relay_url" placeholder="wss://your-vps.example.com" autocomplete="off" spellcheck="false">
+            <div class="live-row">
+                <button type="button" class="btn btn-settings-save" onclick="saveTunnel(true)">Lưu &amp; bật</button>
+                <button type="button" class="btn btn-stop" onclick="stopTunnel()">Dừng</button>
+            </div>
+            <div class="live-status" id="tunnel_status">…</div>
+        </details>
+    </div>
 
     <div class="tab-panel" id="tab_actions">
-        <div class="card">
-            <h2>🕺 Hành động &amp; bài múa</h2>
-            <p class="settings-hint">Bấm nút → robot chạy skill ROM ngay. Múa (cam) tách riêng; skill khác (xám).</p>
-            <div class="try-toolbar">
-                <input type="search" id="actions_search" placeholder="Tìm tên skill / múa..." oninput="filterTryLists()">
-                <button type="button" class="btn btn-stop" onclick="stopTryout()">⏹ Dừng</button>
-            </div>
-            <div class="try-meta" id="actions_meta">Đang tải danh sách…</div>
-            <div class="try-section-title">Bài múa</div>
-            <div class="try-grid" id="dance_grid"></div>
-            <div class="try-section-title">Hành động / skill khác</div>
-            <div class="try-grid" id="skill_grid"></div>
+        <h2 data-i18n="actions.h2">🕺 Hành động &amp; bài múa</h2>
+        <p class="settings-hint">Motion xanh = ActionApi im. Bài múa: bật/tắt nhạc bằng công tắc bên dưới.</p>
+        <div class="try-toolbar">
+            <input type="search" id="actions_search" placeholder="Tìm…" oninput="filterTryLists()">
+            <button type="button" class="btn btn-stop" onclick="stopTryout()" data-i18n="common.stop">⏹ Dừng</button>
         </div>
+        <div class="try-meta" id="actions_meta">Đang tải…</div>
+        <div class="try-section-title">Motion im</div>
+        <div class="try-grid" id="motion_grid"></div>
+        <div class="try-section-title">Bài múa</div>
+        <div class="ctrl-switches dance-music-row">
+            <label class="ctrl-switch" for="danceMusicSwitch">
+                <span class="ctrl-switch-text" id="danceMusicLabel">🎵 Múa có nhạc</span>
+                <input type="checkbox" id="danceMusicSwitch" checked onchange="danceMusicToggle(this.checked)">
+                <span class="ctrl-switch-track" aria-hidden="true"><span class="ctrl-switch-thumb"></span></span>
+            </label>
+        </div>
+        <div class="try-grid" id="dance_grid"></div>
+        <div class="try-section-title">Skill khác</div>
+        <div class="try-grid" id="skill_grid"></div>
     </div>
 
     <div class="tab-panel" id="tab_express">
-        <div class="card">
-            <h2>👀 Biểu cảm mắt (DDeere / ROM)</h2>
-            <p class="settings-hint">Bấm để xem express trên mắt. Chọn cái hay rồi nhớ tên để dùng sau (vd. nhạc: streaming_media_001).</p>
-            <div class="try-toolbar">
-                <input type="search" id="express_search" placeholder="Tìm biểu cảm..." oninput="filterTryLists()">
-                <button type="button" class="btn btn-stop" onclick="stopTryout()">⏹ Dừng</button>
-            </div>
-            <div class="try-meta" id="express_meta">Đang tải danh sách…</div>
-            <div class="try-grid" id="express_grid"></div>
+        <h2 data-i18n="express.h2">👀 Biểu cảm mắt</h2>
+        <div class="try-toolbar">
+            <input type="search" id="express_search" placeholder="Tìm…" oninput="filterTryLists()">
+            <button type="button" class="btn btn-stop" onclick="stopTryout()" data-i18n="common.stop">⏹ Dừng</button>
         </div>
+        <div class="try-meta" id="express_meta">Đang tải…</div>
+        <div class="try-grid" id="express_grid"></div>
     </div>
 
-    <script>
+<script>
         const MOCK_UNITS = ['Unit 1', 'Unit 2', 'Unit 3', 'Unit 4', 'Unit 5', 'Unit 6'];
         const DEFAULT_MUSIC_SERVER = 'https://youtube.kytuoi.com';
+        function showBotSection(id) {
+            document.querySelectorAll('.bot-section').forEach(s => s.classList.remove('open'));
+            document.querySelectorAll('.bot-nav-item').forEach(b => b.classList.remove('active'));
+            const sec = document.getElementById(id);
+            if (sec) sec.classList.add('open');
+            const btn = document.querySelector('.bot-nav-item[data-section="'+id+'"]');
+            if (btn) btn.classList.add('active');
+            const grid = document.getElementById('bot_nav_grid');
+            const back = document.getElementById('bot_back_wrap');
+            if (grid) grid.style.display = 'none';
+            if (back) back.style.display = 'block';
+        }
+        function hideBotSections() {
+            document.querySelectorAll('.bot-section').forEach(s => s.classList.remove('open'));
+            document.querySelectorAll('.bot-nav-item').forEach(b => b.classList.remove('active'));
+            const grid = document.getElementById('bot_nav_grid');
+            const back = document.getElementById('bot_back_wrap');
+            if (grid) grid.style.display = '';
+            if (back) back.style.display = 'none';
+        }
+        function openNavDrawer(open) {
+            const d = document.getElementById('navDrawer');
+            const b = document.getElementById('navBackdrop');
+            const burger = document.getElementById('navBurger');
+            if (!d) return;
+            d.classList.toggle('is-open', !!open);
+            d.setAttribute('aria-hidden', open ? 'false' : 'true');
+            if (b) {
+                b.hidden = !open;
+                b.classList.toggle('is-open', !!open);
+            }
+            if (burger) burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
 
-        let actionsCache = { dances: [], skills: [] };
+
+        let actionsCache = { motions: [], dances: [], skills: [] };
         let expressCache = [];
         let tryoutLoaded = false;
 
         function switchTab(name) {
-            ['student', 'robot', 'actions', 'express'].forEach(n => {
+            ['botsettings', 'live', 'actions', 'express'].forEach(n => {
                 const panel = document.getElementById('tab_' + n);
                 const btn = document.getElementById('tab_btn_' + n);
+                const dbtn = document.getElementById('drawer_btn_' + n);
                 if (panel) panel.classList.toggle('active', n === name);
                 if (btn) btn.classList.toggle('active', n === name);
+                if (dbtn) dbtn.classList.toggle('active', n === name);
             });
+            openNavDrawer(false);
             if ((name === 'actions' || name === 'express') && !tryoutLoaded) {
                 loadTryoutCatalogs();
             }
+            if (name === 'live') refreshLiveStatus();
+            if (name === 'botsettings') hideBotSections();
         }
 
         function toggleSettingsBlock(id) {
@@ -229,12 +345,15 @@
                 ]);
                 const aData = await aResp.json();
                 const eData = await eResp.json();
+                actionsCache.motions = aData.motions || [];
                 actionsCache.dances = aData.dances || [];
                 actionsCache.skills = aData.skills || [];
                 expressCache = eData.expresses || [];
                 tryoutLoaded = true;
                 document.getElementById('actions_meta').textContent =
-                    'Múa: ' + actionsCache.dances.length + ' · Skill: ' + actionsCache.skills.length;
+                    'Motion im: ' + actionsCache.motions.length
+                    + ' · Múa: ' + actionsCache.dances.length
+                    + ' · Skill khác: ' + actionsCache.skills.length;
                 document.getElementById('express_meta').textContent =
                     'Biểu cảm: ' + expressCache.length;
                 filterTryLists();
@@ -247,6 +366,7 @@
         function filterTryLists() {
             const aq = (document.getElementById('actions_search').value || '').trim().toLowerCase();
             const eq = (document.getElementById('express_search').value || '').trim().toLowerCase();
+            renderTryGrid('motion_grid', actionsCache.motions.filter(x => !aq || (x.id || '').toLowerCase().includes(aq) || (x.label || '').toLowerCase().includes(aq)), 'motion', 'playSkill');
             renderTryGrid('dance_grid', actionsCache.dances.filter(x => !aq || (x.id || '').toLowerCase().includes(aq)), 'dance', 'playSkill');
             renderTryGrid('skill_grid', actionsCache.skills.filter(x => !aq || (x.id || '').toLowerCase().includes(aq)), '', 'playSkill');
             renderTryGrid('express_grid', expressCache.filter(x => !eq || (x.id || '').toLowerCase().includes(eq)), 'express', 'playExpress');
@@ -267,16 +387,36 @@
             }).join('');
         }
 
+        function danceMusicOn() {
+            return localStorage.getItem('sc_dance_music') !== '0';
+        }
+
+        function danceMusicSyncUI() {
+            const on = danceMusicOn();
+            const sw = document.getElementById('danceMusicSwitch');
+            const lb = document.getElementById('danceMusicLabel');
+            if (sw) sw.checked = on;
+            if (lb) lb.textContent = on ? '🎵 Múa có nhạc' : '🔇 Múa không nhạc';
+        }
+
+        function danceMusicToggle(on) {
+            localStorage.setItem('sc_dance_music', on ? '1' : '0');
+            danceMusicSyncUI();
+        }
+
         async function playSkill(btn, name) {
             btn.classList.add('busy');
             try {
                 const resp = await fetch('/api/play_skill', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name })
+                    body: JSON.stringify({ name: name, music: danceMusicOn() })
                 });
                 const data = await resp.json();
                 if (!data.success) showToast('❌ ' + (data.error || name));
+                else if (data.type === 'dance') showToast((data.music ? '🎵 ' : '🔇 ') + name);
+                else if (data.type === 'action_silent' || data.type === 'action_guess') showToast('🔇 ' + (data.action_id || name));
+                else if (data.sfx_muted) showToast('🔇 ' + name);
                 else showToast('▶️ ' + name);
             } catch (err) {
                 showToast('Lỗi: ' + err.message);
@@ -308,6 +448,443 @@
             } catch (err) {
                 showToast('Lỗi dừng: ' + err.message);
             }
+        }
+
+        /* —— Live control (wired-style) + intercom + share —— */
+        let intercomWs = null;
+        let phoneMuted = false;
+        let robotMuted = false;
+        let audioCtx = null;
+        let micStream = null;
+        let micProc = null;
+        let ctrlAssumed = false;
+        let ctrlRemotePoll = null;
+        let ctrlPadBusy = false;
+        let nextPlayTime = 0;
+
+        function ctrlSetPadEnabled(on) {
+            document.querySelectorAll('#ctrlGrid .ctrl-btn').forEach(function (b) {
+                b.disabled = !on;
+            });
+            var mic = document.getElementById('ctrlMicSwitch');
+            var listen = document.getElementById('ctrlListenSwitch');
+            if (mic) mic.disabled = !on;
+            if (listen) listen.disabled = !on;
+        }
+
+        function ctrlAssume() {
+            ctrlAssumed = true;
+            document.getElementById('ctrlAssumeBtn').classList.add('is-active');
+            document.getElementById('ctrlReleaseBtn').classList.remove('is-active');
+            ctrlSetPadEnabled(true);
+            var cam = document.getElementById('ctrlCamSwitch');
+            if (cam && !cam.checked) {
+                cam.checked = true;
+                ctrlCamToggle(true);
+            }
+            document.getElementById('controlStatus').textContent = 'Đã chiếm quyền — pad & micro sẵn sàng';
+            showToast('Chiếm quyền');
+        }
+
+        function ctrlRelease() {
+            ctrlAssumed = false;
+            document.getElementById('ctrlAssumeBtn').classList.remove('is-active');
+            document.getElementById('ctrlReleaseBtn').classList.add('is-active');
+            ctrlSetPadEnabled(false);
+            var mic = document.getElementById('ctrlMicSwitch');
+            var listen = document.getElementById('ctrlListenSwitch');
+            if (mic) mic.checked = false;
+            if (listen) listen.checked = false;
+            stopIntercom(false);
+            stopTryout();
+            document.getElementById('controlStatus').textContent = 'Đã nhả quyền';
+            showToast('Nhả quyền');
+        }
+
+        function ctrlCamToggle(on) {
+            var img = document.getElementById('live_cam');
+            var ph = document.getElementById('ctrlCamPlaceholder');
+            if (on) {
+                img.hidden = false;
+                if (ph) ph.hidden = true;
+                img.src = '/cam/mjpeg?t=' + Date.now();
+            } else {
+                img.src = '';
+                img.hidden = true;
+                if (ph) ph.hidden = false;
+            }
+        }
+
+        function startLiveCam() {
+            var sw = document.getElementById('ctrlCamSwitch');
+            if (sw) sw.checked = true;
+            ctrlCamToggle(true);
+        }
+        function stopLiveCam() {
+            var sw = document.getElementById('ctrlCamSwitch');
+            if (sw) sw.checked = false;
+            ctrlCamToggle(false);
+        }
+
+        async function ctrlPadSkill(name) {
+            if (!ctrlAssumed || !name) return;
+            try {
+                await fetch('/api/play_skill', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+            } catch (_) {}
+        }
+
+        function ctrlPadHold(name, ev) {
+            if (ev) { try { ev.preventDefault(); } catch (_) {} }
+            if (!ctrlAssumed || ctrlPadBusy) return;
+            ctrlPadBusy = true;
+            ctrlPadSkill(name);
+        }
+
+        function ctrlPadStop(ev) {
+            if (ev) { try { ev.preventDefault(); } catch (_) {} }
+            ctrlPadBusy = false;
+        }
+
+        function ctrlStopAll(ev) {
+            if (ev) { try { ev.preventDefault(); } catch (_) {} }
+            ctrlPadBusy = false;
+            stopTryout();
+        }
+
+        function ctrlRemoteSetButtons(on) {
+            var onBtn = document.getElementById('ctrlRemoteOnBtn');
+            var offBtn = document.getElementById('ctrlRemoteOffBtn');
+            var panel = document.getElementById('ctrlRemotePanel');
+            if (onBtn) onBtn.classList.toggle('is-active', !!on);
+            if (offBtn) offBtn.classList.toggle('is-active', !on);
+            if (panel) panel.classList.toggle('is-on', !!on);
+        }
+
+        function ctrlRemoteSetUI(st) {
+            var box = document.getElementById('ctrlRemoteBox');
+            var url = document.getElementById('ctrlRemoteURL');
+            var status = document.getElementById('ctrlRemoteStatus');
+            var on = !!(st && st.active && st.share_url);
+            ctrlRemoteSetButtons(on || !!(st && st.active));
+            if (box) box.hidden = !(st && (st.active || st.share_url || st.last_error));
+            if (url) url.value = (st && st.share_url) || '';
+            if (!status) return;
+            status.classList.remove('is-ready', 'is-error');
+            if (on) {
+                status.textContent = (st.hint || ('Link sẵn sàng (' + ((st && st.provider) || 'tunnel') + ')'))
+                    + (st.public_ip ? ('\nIP cần nhập (loca.lt): ' + st.public_ip) : '');
+                status.classList.add('is-ready');
+            } else if (st && st.last_error) {
+                status.textContent = st.last_error;
+                status.classList.add('is-error');
+            } else if (st && st.active) {
+                status.textContent = 'Đang tải tunnel…';
+            } else {
+                status.textContent = '';
+            }
+        }
+
+        async function ctrlRemoteRefresh() {
+            try {
+                var resp = await fetch('/api/share_link');
+                var st = await resp.json();
+                ctrlRemoteSetUI(st);
+                if (st.active && st.share_url && ctrlRemotePoll) {
+                    clearInterval(ctrlRemotePoll);
+                    ctrlRemotePoll = null;
+                }
+            } catch (_) {}
+        }
+
+        function ctrlRemoteStartPoll() {
+            if (ctrlRemotePoll) clearInterval(ctrlRemotePoll);
+            ctrlRemotePoll = setInterval(ctrlRemoteRefresh, 1500);
+        }
+
+        async function ctrlRemoteToggle(on) {
+            var status = document.getElementById('ctrlRemoteStatus');
+            var box = document.getElementById('ctrlRemoteBox');
+            if (on) {
+                ctrlRemoteSetButtons(true);
+                if (box) box.hidden = false;
+                if (status) {
+                    status.classList.remove('is-ready', 'is-error');
+                    status.textContent = 'Đang tạo link…';
+                }
+                try {
+                    var resp = await fetch('/api/share_link', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'create' })
+                    });
+                    var st = await resp.json();
+                    ctrlRemoteSetUI(st);
+                    if (st.active && !st.share_url) ctrlRemoteStartPoll();
+                    if (st.share_url) showToast((st.provider || '') + ' ' + st.share_url);
+                    else if (!st.success) showToast(st.error || st.last_error || 'Tạo link thất bại');
+                } catch (e) {
+                    if (status) {
+                        status.textContent = e.message;
+                        status.classList.add('is-error');
+                    }
+                    ctrlRemoteSetButtons(false);
+                }
+            } else {
+                try {
+                    var resp2 = await fetch('/api/share_link', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action: 'stop' })
+                    });
+                    var st2 = await resp2.json();
+                    ctrlRemoteSetUI(st2);
+                } catch (_) {
+                    ctrlRemoteSetUI({ active: false, share_url: '' });
+                }
+                if (ctrlRemotePoll) {
+                    clearInterval(ctrlRemotePoll);
+                    ctrlRemotePoll = null;
+                }
+                showToast('Đã tắt link');
+            }
+        }
+
+        async function ctrlRemoteCopy() {
+            var urlEl = document.getElementById('ctrlRemoteURL');
+            var url = (urlEl && urlEl.value || '').trim();
+            if (!url) {
+                showToast('Chưa có link');
+                return;
+            }
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(url);
+                } else {
+                    urlEl.select();
+                    document.execCommand('copy');
+                }
+                showToast('Đã sao chép');
+            } catch (_) {
+                showToast('Giữ chọn ô link rồi Ctrl+C');
+            }
+        }
+
+        async function refreshLiveStatus() {
+            try {
+                var resp = await fetch('/api/live_status');
+                var data = await resp.json();
+                var t = data.tunnel || {};
+                var tunnelEl = document.getElementById('tunnel_relay_url');
+                var tunnelSt = document.getElementById('tunnel_status');
+                if (tunnelEl) tunnelEl.value = t.relay_url || '';
+                if (tunnelSt) {
+                    tunnelSt.textContent =
+                        (t.connected ? 'Tunnel OK' : (t.running ? 'Đang kết nối…' : 'Tắt'))
+                        + (t.last_error ? ' — ' + t.last_error : '')
+                        + '\nLAN: ' + (data.lan_url || '')
+                        + '\nDevice: ' + (t.device_id || '');
+                }
+                ctrlRemoteSetUI(data.share || {});
+                var ic = data.intercom || {};
+                phoneMuted = !!ic.phone_tx_muted;
+                robotMuted = !!ic.robot_tx_muted;
+                syncIntercomSwitches();
+            } catch (e) {
+                var ts = document.getElementById('tunnel_status');
+                if (ts) ts.textContent = 'Lỗi: ' + e.message;
+            }
+        }
+
+        function syncIntercomSwitches() {
+            var mic = document.getElementById('ctrlMicSwitch');
+            var listen = document.getElementById('ctrlListenSwitch');
+            if (mic && document.activeElement !== mic) {
+                /* keep UI: checked = mic sending = !phoneMuted when connected */
+            }
+            if (listen && document.activeElement !== listen) {
+                /* listen checked = !robotMuted when connected */
+            }
+        }
+
+        async function ensureIntercom() {
+            if (intercomWs && intercomWs.readyState <= 1) return true;
+            try {
+                await startIntercomInternal();
+                return true;
+            } catch (e) {
+                showToast('Mic: ' + e.message);
+                return false;
+            }
+        }
+
+        async function ctrlMicToggle(on) {
+            if (!ctrlAssumed && on) {
+                document.getElementById('ctrlMicSwitch').checked = false;
+                showToast('Chiếm quyền trước');
+                return;
+            }
+            if (on) {
+                phoneMuted = false;
+                if (!(await ensureIntercom())) {
+                    document.getElementById('ctrlMicSwitch').checked = false;
+                    return;
+                }
+                await postMute();
+            } else {
+                phoneMuted = true;
+                await postMute();
+                var listen = document.getElementById('ctrlListenSwitch');
+                if (!listen || !listen.checked) stopIntercom(false);
+            }
+        }
+
+        async function ctrlListenToggle(on) {
+            if (!ctrlAssumed && on) {
+                document.getElementById('ctrlListenSwitch').checked = false;
+                showToast('Chiếm quyền trước');
+                return;
+            }
+            if (on) {
+                robotMuted = false;
+                if (!(await ensureIntercom())) {
+                    document.getElementById('ctrlListenSwitch').checked = false;
+                    return;
+                }
+                await postMute();
+            } else {
+                robotMuted = true;
+                await postMute();
+                var mic = document.getElementById('ctrlMicSwitch');
+                if (!mic || !mic.checked) stopIntercom(false);
+            }
+        }
+
+        async function postMute() {
+            await fetch('/api/intercom_mute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone_tx_muted: phoneMuted, robot_tx_muted: robotMuted })
+            });
+            if (intercomWs && intercomWs.readyState === 1) {
+                intercomWs.send(JSON.stringify({
+                    type: 'mute', phone_tx_muted: phoneMuted, robot_tx_muted: robotMuted
+                }));
+            }
+        }
+
+        function wsIntercomUrl() {
+            var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return proto + '//' + location.host + '/ws/intercom';
+        }
+
+        async function startIntercomInternal() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            await audioCtx.resume();
+            micStream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+            });
+            var src = audioCtx.createMediaStreamSource(micStream);
+            micProc = audioCtx.createScriptProcessor(1024, 1, 1);
+            micProc.onaudioprocess = function (ev) {
+                if (phoneMuted || !intercomWs || intercomWs.readyState !== 1) return;
+                var input = ev.inputBuffer.getChannelData(0);
+                intercomWs.send(floatTo16BitPCM(input));
+            };
+            src.connect(micProc);
+            var silent = audioCtx.createGain();
+            silent.gain.value = 0;
+            micProc.connect(silent);
+            silent.connect(audioCtx.destination);
+
+            intercomWs = new WebSocket(wsIntercomUrl());
+            intercomWs.binaryType = 'arraybuffer';
+            await new Promise(function (resolve, reject) {
+                intercomWs.onopen = function () {
+                    document.getElementById('controlStatus').textContent = 'Đàm thoại đã kết nối';
+                    resolve();
+                };
+                intercomWs.onerror = function () { reject(new Error('WebSocket intercom')); };
+                setTimeout(function () { reject(new Error('timeout intercom')); }, 8000);
+            });
+            intercomWs.onmessage = function (ev) {
+                if (typeof ev.data === 'string') {
+                    try {
+                        var o = JSON.parse(ev.data);
+                        if (o.type === 'mute' || o.type === 'hello') {
+                            if (typeof o.phone_tx_muted === 'boolean') phoneMuted = o.phone_tx_muted;
+                            if (typeof o.robot_tx_muted === 'boolean') robotMuted = o.robot_tx_muted;
+                        }
+                    } catch (_) {}
+                    return;
+                }
+                if (robotMuted) return;
+                playPcm16(new Int16Array(ev.data));
+            };
+            intercomWs.onclose = function () { stopIntercom(false); };
+        }
+
+        function stopIntercom(toast) {
+            try { intercomWs && intercomWs.close(); } catch (_) {}
+            intercomWs = null;
+            try { micProc && micProc.disconnect(); } catch (_) {}
+            micProc = null;
+            if (micStream) {
+                micStream.getTracks().forEach(function (t) { t.stop(); });
+                micStream = null;
+            }
+            try { audioCtx && audioCtx.close(); } catch (_) {}
+            audioCtx = null;
+            if (toast !== false) showToast('Đàm thoại OFF');
+        }
+
+        function floatTo16BitPCM(float32) {
+            var buf = new ArrayBuffer(float32.length * 2);
+            var view = new DataView(buf);
+            for (var i = 0; i < float32.length; i++) {
+                var s = Math.max(-1, Math.min(1, float32[i]));
+                view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return buf;
+        }
+
+        function playPcm16(int16) {
+            if (!audioCtx) return;
+            var f32 = new Float32Array(int16.length);
+            for (var i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768;
+            var buf = audioCtx.createBuffer(1, f32.length, 16000);
+            buf.copyToChannel(f32, 0);
+            var src = audioCtx.createBufferSource();
+            src.buffer = buf;
+            src.connect(audioCtx.destination);
+            var now = audioCtx.currentTime;
+            if (nextPlayTime < now) nextPlayTime = now;
+            src.start(nextPlayTime);
+            nextPlayTime += buf.duration;
+        }
+
+        async function saveTunnel(autoStart) {
+            var url = (document.getElementById('tunnel_relay_url').value || '').trim();
+            var resp = await fetch('/api/tunnel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'save', relay_url: url, auto_start: !!autoStart })
+            });
+            var data = await resp.json();
+            showToast(data.message || (data.connected ? 'Tunnel OK' : 'Đã lưu'));
+            refreshLiveStatus();
+        }
+        async function stopTunnel() {
+            await fetch('/api/tunnel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'stop' })
+            });
+            showToast('Tunnel dừng');
+            refreshLiveStatus();
         }
 
         async function saveMusicServer() {
@@ -1015,6 +1592,100 @@
             btn.disabled = false;
         }
 
+        const PAIR_POLL_MS = 5000;
+        const PAIR_POLL_MAX = 60;
+        let pairGen = 0;
+        let pairCode = '';
+
+        function pairEsc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        function pairRender(state, st) {
+            const box = document.getElementById('pair_box');
+            if (!box) return;
+            box.style.display = 'block';
+            box.className = 'pair-box pair-' + state;
+            if (state === 'checking') {
+                box.innerHTML = '⏳ Đang kiểm tra liên kết Xiaozhi…';
+            } else if (state === 'paired') {
+                box.innerHTML = '<div class="pair-title">✅ Đã liên kết Xiaozhi</div>'
+                    + '<div>Chạm đầu robot hoặc gọi đánh thức để bắt đầu giao tiếp.</div>';
+            } else if (state === 'unpaired') {
+                pairCode = st.code || '';
+                box.innerHTML = '<div class="pair-title">🔗 Chưa liên kết — nhập mã này trên xiaozhi.me</div>'
+                    + '<div class="pair-code-row">'
+                    + '<input type="text" class="pair-code" id="pair_code" readonly value="' + pairEsc(pairCode) + '">'
+                    + '<button type="button" class="btn pair-copy" onclick="pairCopy()">📋 Copy</button>'
+                    + '</div>'
+                    + '<ol class="pair-steps">'
+                    + '<li>Bấm Copy để sao chép mã 6 số.</li>'
+                    + '<li>Mở <a href="https://xiaozhi.me" target="_blank" rel="noopener">xiaozhi.me</a> → đăng nhập → Thêm thiết bị → dán mã.</li>'
+                    + '<li>Giữ trang này — liên kết xong sẽ tự báo xanh.</li>'
+                    + '</ol>'
+                    + '<div class="pair-sub">Device-Id: ' + pairEsc(st.device_id || '') + '</div>';
+            } else {
+                box.innerHTML = '<div class="pair-title">⚠️ Không kiểm tra được liên kết</div>'
+                    + '<div>' + pairEsc((st && st.error) || 'Lỗi không rõ') + '</div>'
+                    + '<button type="button" class="btn pair-copy" onclick="pairCheckAfterSave(0)">🔄 Thử lại</button>';
+            }
+        }
+
+        async function pairFetch() {
+            const resp = await fetch('/api/pair_status', { cache: 'no-store' });
+            return await resp.json();
+        }
+
+        function pairCheckAfterSave(delayMs) {
+            const gen = ++pairGen;
+            pairCode = '';
+            pairRender('checking');
+            setTimeout(() => pairPoll(gen, 0), delayMs || 0);
+        }
+
+        async function pairPoll(gen, n) {
+            if (gen !== pairGen) return;
+            let st;
+            try {
+                st = await pairFetch();
+            } catch (err) {
+                st = { success: false, error: err.message };
+            }
+            if (gen !== pairGen) return;
+            if (!st.success) {
+                pairRender('error', st);
+                return;
+            }
+            if (st.paired) {
+                const wasUnpaired = !!pairCode;
+                pairCode = '';
+                pairRender('paired', st);
+                if (wasUnpaired) showToast('✅ Đã liên kết Xiaozhi');
+                return;
+            }
+            if (!pairCode || pairCode !== st.code) pairRender('unpaired', st);
+            if (n + 1 >= PAIR_POLL_MAX) return;
+            setTimeout(() => pairPoll(gen, n + 1), PAIR_POLL_MS);
+        }
+
+        async function pairCopy() {
+            const el = document.getElementById('pair_code');
+            const code = (el && el.value || '').trim();
+            if (!code) return;
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(code);
+                } else {
+                    el.select();
+                    document.execCommand('copy');
+                }
+                showToast('Đã sao chép mã ' + code);
+            } catch (_) {
+                el.select();
+                showToast('Giữ chọn mã rồi Ctrl+C');
+            }
+        }
+
         async function saveConfig() {
             const btn = document.getElementById('btn_save');
             btn.disabled = true;
@@ -1071,8 +1742,10 @@
                 if (courseChanged || macChanged || voiceChanged) {
                     showToast('✅ Đã lưu — đang đổi Device-Id (~vài giây), rồi nói tiếp');
                     setTimeout(loadConfig, 3000);
+                    pairCheckAfterSave(3000);
                 } else {
                     showToast('✅ Đã lưu tên / unit');
+                    pairCheckAfterSave(0);
                 }
             } catch (err) {
                 showToast('❌ Lỗi: ' + err.message);
@@ -1081,7 +1754,18 @@
             btn.textContent = '💾 Lưu cấu hình';
         }
 
-        document.addEventListener('DOMContentLoaded', loadConfig);
+        document.addEventListener('DOMContentLoaded', () => {
+            if (window.MiniI18n) MiniI18n.init();
+            const burger = document.getElementById('navBurger');
+            const close = document.getElementById('navDrawerClose');
+            const backdrop = document.getElementById('navBackdrop');
+            if (burger) burger.addEventListener('click', () => openNavDrawer(true));
+            if (close) close.addEventListener('click', () => openNavDrawer(false));
+            if (backdrop) backdrop.addEventListener('click', () => openNavDrawer(false));
+            danceMusicSyncUI();
+            loadConfig();
+        });
     </script>
 </body>
 </html>
+

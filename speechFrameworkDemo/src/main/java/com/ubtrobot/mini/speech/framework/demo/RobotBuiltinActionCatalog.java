@@ -1,5 +1,6 @@
 package com.ubtrobot.mini.speech.framework.demo;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.LinkedHashMap;
@@ -140,6 +141,139 @@ public final class RobotBuiltinActionCatalog {
 
     private static void putKw(String substringLower, String id) {
         SUBSTRING_TO_ID.put(substringLower.toLowerCase(Locale.US), id);
+    }
+
+    /**
+     * SkillApi gesture thường kèm SFX hệ thống → ActionApi id (motion, không skill sound).
+     * Key = tên skill/enum uppercase.
+     */
+    private static final LinkedHashMap<String, String> SKILL_TO_SILENT_ACTION = new LinkedHashMap<>();
+
+    /** Danh sách nút UI tryout: label → ActionApi id (ưu tiên silent). */
+    private static final LinkedHashMap<String, String> TRYOUT_SILENT_MOTIONS = new LinkedHashMap<>();
+
+    static {
+        putSilent("NOD", ACTION_011_NOD);
+        putSilent("NODDING", ACTION_011_NOD);
+        putSilent("SHAKE_HAND", SURVEILLANCE_003_HANDSHAKE);
+        putSilent("SHAKEHAND", SURVEILLANCE_003_HANDSHAKE);
+        putSilent("HANDSHAKE", SURVEILLANCE_003_HANDSHAKE);
+        putSilent("HAND_KISS", SURVEILLANCE_004_BLOW_KISSES);
+        putSilent("HANDKISS", SURVEILLANCE_004_BLOW_KISSES);
+        putSilent("HUG", RANDOM_SHORT2_HUG);
+        putSilent("BE_CUTE", SURVEILLANCE_006_CUTE);
+        putSilent("BECUTE", SURVEILLANCE_006_CUTE);
+        putSilent("SAY_HI", SURVEILLANCE_001_HELLO);
+        putSilent("SAYHI", SURVEILLANCE_001_HELLO);
+        putSilent("HELLO", SURVEILLANCE_001_HELLO);
+        putSilent("FRIGHTEN", W_STAND_0010);
+        putSilent("SCARE", W_STAND_0010);
+        putSilent("LAUGH", ACTION_010_LAUGH);
+        putSilent("WELCOME", ACTION_015_WELCOME);
+        putSilent("GOODBYE", ACTION_016_GOODBYE);
+        putSilent("WAVE_LEFT", RANDOM_SHORT3_WAVE_LEFT);
+        putSilent("WAVE_RIGHT", RANDOM_SHORT4_WAVE_RIGHT);
+        putSilent("RAISE_HANDS", ACTION_017_RAISE_HANDS);
+        putSilent("RAISEHANDS", ACTION_017_RAISE_HANDS);
+        putSilent("SHAKE_HEAD", ACTION_037_SHAKE_HEAD);
+        putSilent("TILT_HEAD", ACTION_038_TILT_HEAD);
+        putSilent("KUNGFU", ACTION_013_KUNG_FU);
+        putSilent("KUNG_FU", ACTION_013_KUNG_FU);
+        putSilent("TAIJI", ACTION_014_TAI_CHI);
+        putSilent("PUSH_UP", ACTION_012_PUSHUPS);
+        putSilent("PUSHUP", ACTION_012_PUSHUPS);
+        putSilent("YOGA", ACTION_024_YOGA);
+        putSilent("RESET", ACTION_009_RESET);
+        putSilent("SNEEZE", W_STAND_0008);
+        putSilent("FART", W_STAND_0002);
+        putSilent("HICCUP", W_STAND_0001);
+        putSilent("STRETCH", W_STAND_0003);
+        putSilent("TICKLE", W_STAND_0009);
+
+        tryoutMotion("Gật đầu (011)", ACTION_011_NOD);
+        tryoutMotion("Lắc đầu (037)", ACTION_037_SHAKE_HEAD);
+        tryoutMotion("Nghiêng đầu (038)", ACTION_038_TILT_HEAD);
+        tryoutMotion("Bắt tay", SURVEILLANCE_003_HANDSHAKE);
+        tryoutMotion("Hôn gió", SURVEILLANCE_004_BLOW_KISSES);
+        tryoutMotion("Ôm", RANDOM_SHORT2_HUG);
+        tryoutMotion("Dễ thương", SURVEILLANCE_006_CUTE);
+        tryoutMotion("Xin chào", SURVEILLANCE_001_HELLO);
+        tryoutMotion("Vẫy trái", RANDOM_SHORT3_WAVE_LEFT);
+        tryoutMotion("Vẫy phải", RANDOM_SHORT4_WAVE_RIGHT);
+        tryoutMotion("Chào mừng (015)", ACTION_015_WELCOME);
+        tryoutMotion("Cười (010)", ACTION_010_LAUGH);
+        tryoutMotion("Hoảng (scare)", W_STAND_0010);
+        tryoutMotion("Hắt hơi", W_STAND_0008);
+        tryoutMotion("Nấc", W_STAND_0001);
+        tryoutMotion("Đánh rắm", W_STAND_0002);
+        tryoutMotion("Duỗi người", W_STAND_0003);
+        tryoutMotion("Cù", W_STAND_0009);
+        tryoutMotion("Kung fu (013)", ACTION_013_KUNG_FU);
+        tryoutMotion("Thái cực (014)", ACTION_014_TAI_CHI);
+        tryoutMotion("Chống đẩy (012)", ACTION_012_PUSHUPS);
+        tryoutMotion("Yoga (024)", ACTION_024_YOGA);
+        tryoutMotion("Reset (009)", ACTION_009_RESET);
+        tryoutMotion("Giơ tay (017)", ACTION_017_RAISE_HANDS);
+        tryoutMotion("Ngồi (027)", ACTION_027_SIT);
+        tryoutMotion("Đứng ngồi (007)", ACTION_007_SIT_STAND);
+        tryoutMotion("Tạm biệt", ACTION_016_GOODBYE);
+        tryoutMotion("OK", ACTION_006_OK);
+        tryoutMotion("Like", ACTION_005_LIKE);
+        tryoutMotion("Wow", ACTION_004_WOW);
+    }
+
+    private static void putSilent(String skillUpper, String actionId) {
+        SKILL_TO_SILENT_ACTION.put(skillUpper.toUpperCase(Locale.US), actionId);
+    }
+
+    private static void tryoutMotion(String label, String actionId) {
+        TRYOUT_SILENT_MOTIONS.put(label, actionId);
+    }
+
+    /**
+     * @return ActionApi id nếu skill/enum có bản silent; rỗng nếu không map.
+     */
+    public static String silentActionIdForSkill(String skillOrName) {
+        if (skillOrName == null) return "";
+        String t = skillOrName.trim();
+        if (t.isEmpty()) return "";
+        String mapped = SKILL_TO_SILENT_ACTION.get(t.toUpperCase(Locale.US));
+        if (mapped != null) return mapped;
+        // Đã là id ActionApi (011, Surveillance_003, random_short2…) → dùng luôn
+        if (looksLikeActionResourceId(t)) {
+            return normalizeResourceId(t);
+        }
+        return "";
+    }
+
+    /** Id tài nguyên ActionApi (không phải tên SkillApi enum). */
+    public static boolean looksLikeActionResourceId(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return false;
+        String t = raw.trim();
+        if (t.matches("\\d{3}")) return true;
+        String lower = t.toLowerCase(Locale.US);
+        return lower.startsWith("action_")
+                || lower.startsWith("dance_")
+                || lower.startsWith("w_stand_")
+                || lower.startsWith("random_short")
+                || lower.startsWith("surveillance_")
+                || lower.startsWith("custom_");
+    }
+
+    /** Nút UI :8080 — motion ActionApi (không SkillApi SFX). */
+    public static JSONArray listTryoutSilentMotions() {
+        JSONArray arr = new JSONArray();
+        for (Map.Entry<String, String> e : TRYOUT_SILENT_MOTIONS.entrySet()) {
+            try {
+                arr.put(new JSONObject()
+                        .put("id", e.getValue())
+                        .put("label", e.getKey() + " · " + e.getValue())
+                        .put("silent", true));
+            } catch (org.json.JSONException ignored) {
+                // put(String,Object) không fail với String/boolean; giữ compile-safe
+            }
+        }
+        return arr;
     }
 
     private RobotBuiltinActionCatalog() {}

@@ -115,6 +115,8 @@ dependencies {
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4"
   implementation "com.squareup.okhttp3:okhttp:3.12.12"
   implementation "org.json:json:20180813"
+  // XZ thuần Java (API 24) — không dùng commons-compress (cần LinkOption API 26+)
+  implementation "org.tukaani:xz:1.9"
   // QR Self-Control trên mắt (show_config_page)
   implementation "com.google.zxing:core:3.4.1"
 

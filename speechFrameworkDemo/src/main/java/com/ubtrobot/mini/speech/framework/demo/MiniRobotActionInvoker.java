@@ -1,6 +1,7 @@
 package com.ubtrobot.mini.speech.framework.demo;
 
 import android.content.Context;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -1001,6 +1002,10 @@ public final class MiniRobotActionInvoker {
             Log.i(TAG, "LLM emotion \"" + emotion + "\" bỏ qua — đang hiện QR cấu hình trên mắt");
             return;
         }
+        try {
+            IdleAmbientSkillScheduler.noteCommunicating();
+        } catch (Throwable ignored) {
+        }
         if (System.currentTimeMillis() < suppressLlmEmotionUntilMs) {
             long leftSec = (suppressLlmEmotionUntilMs - System.currentTimeMillis() + 999) / 1000;
             Log.i(TAG, "LLM emotion \"" + emotion + "\" bỏ qua — còn ~" + leftSec + "s ("
@@ -1024,13 +1029,167 @@ public final class MiniRobotActionInvoker {
         lastLlmEmotionApplied = skillName;
         lastLlmEmotionSkillMs = now;
         MAIN.post(() -> {
-            Log.i(TAG, "LLM emotion \"" + emotionIn + "\" → mắt=" + eyeName + " skill=" + skillName);
-            if (trySkillApiStartByIntentName(skillName)) {
+            Log.i(TAG, "LLM emotion \"" + emotionIn + "\" → mắt=" + eyeName + " body=" + skillName);
+            if (startLlmBodyActionPreferSilent(skillName)) {
                 return;
             }
-            Log.w(TAG, "SkillApi." + skillName + " thất bại, thử invokeStartSkillByIntent");
-            invokeStartSkillByIntent(skillName);
+            Log.w(TAG, "LLM body \"" + skillName + "\" thất bại");
         });
+    }
+
+    /**
+     * Skill kiểu {@code NOD}/{@code HUG}/… qua SkillApi thường kèm âm hệ thống.
+     * Ưu tiên {@code ActionApi.playAction(id)} (chỉ motion).
+     */
+    private static boolean startLlmBodyActionPreferSilent(String skillName) {
+        if (skillName == null || skillName.isEmpty()) return false;
+        String silentId = RobotBuiltinActionCatalog.silentActionIdForSkill(skillName);
+        if (!silentId.isEmpty()) {
+            if (invokePlayActionExact(silentId)) {
+                Log.i(TAG, "LLM body \"" + skillName + "\" → ActionApi.playAction(\""
+                        + silentId + "\") (silent)");
+                return true;
+            }
+            Log.w(TAG, "ActionApi \"" + silentId + "\" thất bại – fallback SkillApi (có thể có SFX)");
+        }
+        if (trySkillApiStartByIntentName(skillName)) {
+            return true;
+        }
+        invokeStartSkillByIntent(skillName);
+        return true;
+    }
+
+    /** Chỉ 1 motion id — không fallback sang dance (tránh lệch hành động). Public cho UI tryout. */
+    public static boolean invokePlayActionExact(String actionId) {
+        if (actionId == null || actionId.trim().isEmpty()) return false;
+        suppressLlmEmotionForRobotAction(SUPPRESS_LLM_EMOTION_FOR_ACTION_MS);
+        try {
+            Class<?> c = Class.forName("com.ubtrobot.action.ActionApi");
+            Method get = c.getMethod("get");
+            Object api = get.invoke(null);
+            Class<?> listenerClass = Class.forName("com.ubtrobot.commons.ResponseListener");
+            Object listener = responseListenerProxy("ActionApi.playActionExact");
+            if (listener == null) return false;
+            Method play = c.getMethod("playAction", String.class, listenerClass);
+            play.invoke(api, actionId.trim(), listener);
+            Log.i(TAG, "ActionApi.playActionExact(\"" + actionId + "\")");
+            return true;
+        } catch (Throwable t) {
+            Log.w(TAG, "playActionExact(\"" + actionId + "\"): " + t.getMessage());
+            return false;
+        }
+    }
+
+    private static final String[] ACTION_SCAN_DIRS = {
+            "/system/files/actions",
+            "/system/files/action",
+            "/system/files/Actions",
+            "/sdcard/customize/actions",
+            "/sdcard/ubt/actions"
+    };
+
+    private static final Object TRYOUT_MUTE_LOCK = new Object();
+    private static int sTryoutSavedMusic = -1;
+    private static int sTryoutSavedSystem = -1;
+    private static int sTryoutSavedNotif = -1;
+    private static Runnable sTryoutRestoreMute;
+
+    /**
+     * UI tryout: tắt tạm STREAM_MUSIC/SYSTEM/NOTIFICATION để SkillApi không phát SFX hệ thống.
+     * Khôi phục sau {@code restoreAfterMs} (skill chạy async).
+     */
+    public static void beginTryoutSfxMute(long restoreAfterMs) {
+        Context ctx = resolveAppContext();
+        if (ctx == null) return;
+        try {
+            AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            if (am == null) return;
+            synchronized (TRYOUT_MUTE_LOCK) {
+                if (sTryoutRestoreMute != null) {
+                    MAIN.removeCallbacks(sTryoutRestoreMute);
+                }
+                if (sTryoutSavedMusic < 0) {
+                    sTryoutSavedMusic = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+                    sTryoutSavedSystem = am.getStreamVolume(AudioManager.STREAM_SYSTEM);
+                    sTryoutSavedNotif = am.getStreamVolume(AudioManager.STREAM_NOTIFICATION);
+                }
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0);
+                am.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0);
+                am.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0);
+                final int restoreMusic = sTryoutSavedMusic;
+                final int restoreSystem = Math.max(0, sTryoutSavedSystem);
+                final int restoreNotif = Math.max(0, sTryoutSavedNotif);
+                sTryoutRestoreMute = () -> {
+                    synchronized (TRYOUT_MUTE_LOCK) {
+                        try {
+                            am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.max(0, restoreMusic), 0);
+                            am.setStreamVolume(AudioManager.STREAM_SYSTEM, restoreSystem, 0);
+                            am.setStreamVolume(AudioManager.STREAM_NOTIFICATION, restoreNotif, 0);
+                        } catch (Throwable ignored) {
+                        }
+                        sTryoutSavedMusic = -1;
+                        sTryoutSavedSystem = -1;
+                        sTryoutSavedNotif = -1;
+                        sTryoutRestoreMute = null;
+                    }
+                    Log.i(TAG, "Tryout SFX mute: đã khôi phục volume");
+                };
+                long delay = Math.max(3_000L, restoreAfterMs);
+                MAIN.postDelayed(sTryoutRestoreMute, delay);
+                Log.i(TAG, "Tryout SFX mute ON ~" + (delay / 1000) + "s (music was " + restoreMusic + ")");
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "beginTryoutSfxMute: " + t.getMessage());
+        }
+    }
+
+    /** Khôi phục volume ngay nếu đang trong tryout mute (vd. bấm nhảy ngay sau 1 động tác silent). */
+    public static void endTryoutSfxMuteNow() {
+        Runnable r;
+        synchronized (TRYOUT_MUTE_LOCK) {
+            r = sTryoutRestoreMute;
+            if (r == null) return;
+            MAIN.removeCallbacks(r);
+        }
+        r.run();
+    }
+
+    /**
+     * Thử ActionApi nếu có file action trên disk khớp tên skill (vd. {@code I_FELL_OUT_OF_LOVE}).
+     * Không đoán mù tên skill → tránh “OK” ảo khi ROM không có file.
+     * @return id đã gọi playAction, hoặc rỗng.
+     */
+    public static String tryPlayActionGuessForSkill(String skillName) {
+        if (skillName == null || skillName.trim().isEmpty()) return "";
+        String fromDisk = findActionResourceIdOnDisk(skillName.trim());
+        if (fromDisk.isEmpty()) return "";
+        if (invokePlayActionExact(fromDisk)) {
+            return fromDisk;
+        }
+        return "";
+    }
+
+    /** Tìm file action trên robot khớp đúng tên skill (bỏ đuôi). */
+    public static String findActionResourceIdOnDisk(String skillName) {
+        if (skillName == null || skillName.trim().isEmpty()) return "";
+        String want = skillName.trim();
+        for (String dir : ACTION_SCAN_DIRS) {
+            File root = new File(dir);
+            if (!root.isDirectory()) continue;
+            File[] files = root.listFiles();
+            if (files == null) continue;
+            for (File f : files) {
+                if (!f.isFile()) continue;
+                String base = f.getName();
+                int dot = base.lastIndexOf('.');
+                if (dot > 0) base = base.substring(0, dot);
+                if (base.equalsIgnoreCase(want)) {
+                    Log.i(TAG, "Action file khớp \"" + want + "\" → " + base + " @" + dir);
+                    return base;
+                }
+            }
+        }
+        return "";
     }
 
     /** Đã tắt: skill chỉ qua MCP {@code tools/call}, không khớp chữ TTS/STT. */
@@ -1831,25 +1990,56 @@ public final class MiniRobotActionInvoker {
      * Self-Control :8080 — chạy 1 skill theo tên enum/intent ROM (nút thử hành động / múa).
      */
     public static boolean startSkillByNameForTryout(String name) {
+        return startSkillByNameForTryout(name, true);
+    }
+
+    /**
+     * @param danceMusic chỉ áp dụng cho bài múa: true = giữ nhạc, false = mute ~90s (Dừng khôi phục sớm).
+     */
+    public static boolean startSkillByNameForTryout(String name, boolean danceMusic) {
         if (name == null || name.trim().isEmpty()) {
             return false;
         }
         String n = name.trim();
-        if (AlphaMiniRomDanceSkills.isRomDanceSkillName(n)) {
+        boolean isDance = AlphaMiniRomDanceSkills.isRomDanceSkillName(n);
+        // Skill không phải múa luôn mute SFX hệ thống (vd. I_FELL_OUT_OF_LOVE).
+        if (isDance && danceMusic) {
+            endTryoutSfxMuteNow();
+        } else if (isDance) {
+            beginTryoutSfxMute(90_000L);
+        } else {
+            beginTryoutSfxMute(18_000L);
+        }
+        // UI / tryout: ưu tiên ActionApi (không SkillApi SFX).
+        String silentId = RobotBuiltinActionCatalog.silentActionIdForSkill(n);
+        if (!silentId.isEmpty()) {
+            if (invokePlayActionExact(silentId)) {
+                Log.i(TAG, "Tryout \"" + n + "\" → ActionApi.playAction(\"" + silentId + "\") (silent+mute)");
+                return true;
+            }
+            Log.w(TAG, "Tryout silent ActionApi \"" + silentId + "\" fail — thử guess / SkillApi");
+        }
+        String guessed = tryPlayActionGuessForSkill(n);
+        if (!guessed.isEmpty()) {
+            Log.i(TAG, "Tryout \"" + n + "\" → ActionApi guess \"" + guessed + "\" (mute)");
+            return true;
+        }
+        if (isDance) {
             extendLlmEmotionSuppress(SUPPRESS_LLM_EMOTION_FOR_DANCE_MS, "tryout dance " + n);
             XiaozhiSessionManager.noteRobotSkillPcmSuppress(SUPPRESS_PCM_FOR_DANCE_MS, "tryout:" + n);
         } else if ("TAIJI".equalsIgnoreCase(n)) {
             extendLlmEmotionSuppress(SUPPRESS_LLM_EMOTION_FOR_TAIJI_MS, "tryout TAIJI");
             XiaozhiSessionManager.noteRobotSkillPcmSuppress(SUPPRESS_LLM_EMOTION_FOR_TAIJI_MS, "tryout:TAIJI");
+            beginTryoutSfxMute(90_000L);
         } else {
             suppressLlmEmotionForRobotAction(SUPPRESS_LLM_EMOTION_FOR_ACTION_MS);
         }
         if (trySkillApiStartByIntentName(n)) {
-            Log.i(TAG, "Tryout SkillApi.startSkill(\"" + n + "\") OK");
+            Log.i(TAG, "Tryout SkillApi.startSkill(\"" + n + "\") OK (SFX muted)");
             return true;
         }
         invokeStartSkillByIntent(n);
-        Log.i(TAG, "Tryout fallback invokeStartSkillByIntent(\"" + n + "\")");
+        Log.i(TAG, "Tryout fallback invokeStartSkillByIntent(\"" + n + "\") (SFX muted)");
         return true;
     }
 
@@ -1875,6 +2065,7 @@ public final class MiniRobotActionInvoker {
         trySkillApiStopViaReflectionNoArg();
         invokeStopBuiltinLocomotionSkills();
         invokeStopAction();
+        endTryoutSfxMuteNow();
         Log.i(TAG, "Tryout stop skill/action");
     }
 

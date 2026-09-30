@@ -1,0 +1,13 @@
+{
+  "name": "selfcontrol-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Public relay for Alpha Mini Self-Control live cam + intercom",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -1054,6 +1054,10 @@ object DemoSpeech : SpeechModuleFactory() {
             forceReconnect: Boolean = false) {
         val kw = wakeUpDetectorRef?.lastDetectedKeyword?.takeIf { it.isNotBlank() } ?: "wake word"
         lastWakeAtMs = System.currentTimeMillis()
+        try {
+            IdleAmbientSkillScheduler.noteCommunicating()
+        } catch (_: Exception) {
+        }
         LogUtils.i(TAG, "[WakeWord] handleWakeup – detected \"$kw\", force dừng phát + publish + start recognition")
         if (xiaozhiSessionRef != null) {
             // Chạm đầu / hey mini: ting + mắt cười.

@@ -72,6 +72,15 @@ object SelfControlStore {
         Log.i(TAG, "music_server_url=$n")
     }
 
+    /** Relay tunnel công khai (vd. wss://vps.example hoặc https://vps.example). */
+    fun getTunnelRelayUrl(): String =
+        prefs?.getString("tunnel_relay_url", "")?.trim().orEmpty()
+
+    fun setTunnelRelayUrl(url: String) {
+        sp().edit().putString("tunnel_relay_url", url.trim()).apply()
+        Log.i(TAG, "tunnel_relay_url=${url.trim()}")
+    }
+
     fun normalizeMusicServerUrl(url: String): String {
         var u = url.trim()
         if (u.isEmpty()) return DEFAULT_MUSIC_SERVER

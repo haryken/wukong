@@ -1,0 +1,182 @@
+/* Subset of wired webroot/style.css used by the games section (load before chess.css). */
+
+body {
+    background-color: #050505;
+    color: #ffffff;
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+    padding-bottom: 24px;
+}
+
+header,
+.site-header,
+.container {
+    text-align: center;
+    padding: 10px;
+    margin-bottom: 10px;
+    margin-top: 12px;
+}
+
+.container {
+    width: 94%;
+    border-radius: 12px;
+    max-width: 900px;
+    background-color: #1f1f1f;
+    border: 1px solid #3a3a3a;
+    box-sizing: border-box;
+}
+
+.mod-section h2,
+.container > h2 {
+    color: #67e8f9;
+    margin-top: 4px;
+}
+
+.help-box {
+    text-align: left;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 8px 0 12px;
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+.help-box ol {
+    margin: 8px 0 0;
+    padding-left: 1.2em;
+}
+
+.help-box li {
+    margin: 6px 0;
+}
+
+.help-warn {
+    margin: 10px 0 0;
+    font-size: 13px;
+    color: #e8b86d;
+}
+
+h2 {
+    margin-top: 10px;
+    color: #67e8f9;
+}
+
+p {
+    margin: 0 0 10px;
+}
+
+button {
+    background-color: #272727;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-size: 16px;
+    color: #ffffff;
+    cursor: pointer;
+    transition: background-color 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s;
+    margin: 5px;
+}
+
+button:hover {
+    background-color: #2e2e2e;
+    border-color: rgba(34, 211, 238, 0.35);
+}
+
+.mod-section {
+    margin-bottom: 10px;
+}
+
+input[type="range"],
+input[type="number"],
+input[type="text"] {
+    padding: 4px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background: #1e1e1e;
+    color: #f0f0f0;
+    margin: 2px;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+small.sub {
+    display: block;
+    font-weight: normal;
+    font-size: 0.55em;
+    opacity: 0.85;
+    color: #ccc;
+}
+
+html.i18n-pure small.sub {
+    display: none !important;
+}
+
+/* Language dropdown */
+.ui-lang-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 6px 10px;
+    background: #272727;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.ui-lang-wrap:hover {
+    background: #2e2e2e;
+    border-color: rgba(34, 211, 238, 0.45);
+}
+
+.ui-lang-label {
+    font-size: 12px;
+    color: #b3b3b3;
+    white-space: nowrap;
+}
+
+#uiLangSelect {
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #eee;
+    background: #1a1a1a;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    min-width: 120px;
+    cursor: pointer;
+}
+
+#uiLangSelect:focus {
+    outline: none;
+    border-color: rgba(34, 211, 238, 0.45);
+}
+
+/* Selects (wired styles #navSelect this way; .wireos-select has no rule in wired) */
+.wireos-select {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 1px solid #555;
+    background: #1e1e1e;
+    color: #f0f0f0;
+    appearance: auto;
+    box-sizing: border-box;
+}

@@ -80,9 +80,28 @@ object SelfControlHttpServer {
         }
     }
 
+    /** Chỉ process chính bind :8080 — process phụ (:speech) bind sẽ luôn EADDRINUSE. */
+    private fun isMainProcess(context: Context): Boolean {
+        val name = try {
+            java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n')
+        } catch (_: Exception) {
+            return true
+        }
+        return name.isEmpty() || name == context.packageName
+    }
+
     fun start(context: Context) {
+        if (!isMainProcess(context)) return
         SelfControlStore.init(context)
         appContext = context.applicationContext
+        SelfControlCameraMjpeg.init(context)
+        SelfControlIntercom.init(context)
+        SelfControlTunnelBridge.init(context)
+        SelfControlQuickShare.init(context)
+        SelfControlGameSpeak.init(context)
+        if (SelfControlStore.getTunnelRelayUrl().isNotEmpty()) {
+            SelfControlTunnelBridge.start()
+        }
         if (!running.compareAndSet(false, true)) {
             Log.i(TAG, "already running on :$PORT")
             return
@@ -109,6 +128,8 @@ object SelfControlHttpServer {
 
     fun stop() {
         running.set(false)
+        SelfControlTunnelBridge.stop()
+        SelfControlQuickShare.stop()
         try {
             serverSocket?.close()
         } catch (_: Exception) {
@@ -158,6 +179,8 @@ object SelfControlHttpServer {
             val method = parts[0].uppercase()
             val path = parts[1].substringBefore('?')
             var contentLength = 0
+            var upgrade = ""
+            var wsKey = ""
             var line: String?
             while (true) {
                 line = input.readLine() ?: break
@@ -165,8 +188,33 @@ object SelfControlHttpServer {
                 val lower = line.lowercase()
                 if (lower.startsWith("content-length:")) {
                     contentLength = lower.substringAfter(':').trim().toIntOrNull() ?: 0
+                } else if (lower.startsWith("upgrade:")) {
+                    upgrade = lower.substringAfter(':').trim()
+                } else if (lower.startsWith("sec-websocket-key:")) {
+                    wsKey = line.substringAfter(':').trim()
                 }
             }
+
+            // WebSocket intercom (đàm thoại 2 chiều)
+            if (upgrade.contains("websocket") && wsKey.isNotEmpty() &&
+                (path == "/ws/intercom" || path == "/intercom")
+            ) {
+                sock.soTimeout = 0
+                SelfControlIntercom.handleWebSocket(sock, wsKey)
+                return
+            }
+
+            // MJPEG realtime — giữ socket lâu
+            if (method == "GET" && (path == "/cam/mjpeg" || path == "/video")) {
+                sock.soTimeout = 0
+                SelfControlCameraMjpeg.writeMjpeg(sock)
+                return
+            }
+            if (method == "GET" && (path == "/cam/snapshot.jpg" || path == "/cam/snapshot")) {
+                SelfControlCameraMjpeg.writeSnapshotResponse(sock.getOutputStream())
+                return
+            }
+
             val body = if (contentLength > 0) {
                 if (contentLength > MAX_POST_BODY_BYTES) {
                     writeResponse(
@@ -193,6 +241,53 @@ object SelfControlHttpServer {
                 method == "GET" && (path == "/" || path == "/index.html") -> {
                     val html = loadHtml()
                     writeResponse(sock.getOutputStream(), 200, "text/html; charset=utf-8", html)
+                }
+                method == "GET" && path == "/self_control.css" -> {
+                    writeAsset(sock, "self_control.css", "text/css; charset=utf-8")
+                }
+                method == "GET" && path == "/self_control_i18n.js" -> {
+                    writeAsset(sock, "self_control_i18n.js", "application/javascript; charset=utf-8")
+                }
+                method == "GET" && path == "/games" -> {
+                    writeResponse(
+                        sock.getOutputStream(), 200, "text/html; charset=utf-8",
+                        """<meta http-equiv="refresh" content="0;url=/games/">"""
+                    )
+                }
+                method == "GET" && path.startsWith("/games/") -> {
+                    val rel = path.removePrefix("/").let { if (it.endsWith("/")) it + "index.html" else it }
+                    if (rel.contains("..")) {
+                        writeResponse(sock.getOutputStream(), 404, "text/plain", "Not Found")
+                    } else {
+                        writeAsset(sock, rel, assetContentType(rel))
+                    }
+                }
+                method == "POST" && path == "/api/game_speak" -> {
+                    val req = try {
+                        JSONObject(body.ifBlank { "{}" })
+                    } catch (_: Exception) {
+                        JSONObject()
+                    }
+                    val resp = SelfControlGameSpeak.speak(req.optString("text"), req.optString("lang"))
+                    writeResponse(
+                        sock.getOutputStream(),
+                        if (resp.optBoolean("success")) 200 else 400,
+                        "application/json; charset=utf-8",
+                        resp.toString()
+                    )
+                }
+                method == "POST" && path == "/api/game_context" -> {
+                    val req = try {
+                        JSONObject(body.ifBlank { "{}" })
+                    } catch (_: Exception) {
+                        JSONObject()
+                    }
+                    SelfControlGameContext.update(
+                        req.optString("game"),
+                        req.optString("exitId"),
+                        req.optString("summary")
+                    )
+                    writeResponse(sock.getOutputStream(), 200, "application/json; charset=utf-8", """{"success":true}""")
                 }
                 method == "GET" && path == "/api/config" -> {
                     val json = SelfControlStore.buildGetConfigJson().toString()
@@ -234,6 +329,15 @@ object SelfControlHttpServer {
                     }
                     writeResponse(sock.getOutputStream(), 200, "application/json; charset=utf-8", resp.toString())
                 }
+                method == "GET" && path == "/api/pair_status" -> {
+                    val ctx = appContext
+                    val resp = if (ctx == null) {
+                        JSONObject().put("success", false).put("error", "server chưa sẵn sàng")
+                    } else {
+                        SelfControlPairing.check(ctx)
+                    }
+                    writeResponse(sock.getOutputStream(), 200, "application/json; charset=utf-8", resp.toString())
+                }
                 method == "GET" && path == "/api/actions" -> {
                     writeResponse(
                         sock.getOutputStream(), 200, "application/json; charset=utf-8",
@@ -247,12 +351,15 @@ object SelfControlHttpServer {
                     )
                 }
                 method == "POST" && path == "/api/play_skill" -> {
-                    val name = try {
-                        JSONObject(body.ifBlank { "{}" }).optString("name", "")
+                    val req = try {
+                        JSONObject(body.ifBlank { "{}" })
                     } catch (_: Exception) {
-                        ""
+                        JSONObject()
                     }
-                    val resp = SelfControlRobotTryout.playSkill(name)
+                    val resp = SelfControlRobotTryout.playSkill(
+                        req.optString("name", ""),
+                        req.optBoolean("music", true)
+                    )
                     writeResponse(
                         sock.getOutputStream(),
                         if (resp.optBoolean("success")) 200 else 400,
@@ -281,6 +388,95 @@ object SelfControlHttpServer {
                         resp.toString()
                     )
                 }
+                method == "GET" && path == "/api/share_link" -> {
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        SelfControlQuickShare.statusJson().toString()
+                    )
+                }
+                method == "POST" && path == "/api/share_link" -> {
+                    sock.soTimeout = 90_000
+                    val o = try {
+                        JSONObject(body.ifBlank { "{}" })
+                    } catch (_: Exception) {
+                        JSONObject()
+                    }
+                    val resp = when (o.optString("action", "create")) {
+                        "stop" -> {
+                            SelfControlQuickShare.stop()
+                            SelfControlQuickShare.statusJson().put("message", "Đã tắt link")
+                        }
+                        else -> SelfControlQuickShare.createLink()
+                    }
+                    writeResponse(
+                        sock.getOutputStream(),
+                        if (resp.optBoolean("success", true)) 200 else 500,
+                        "application/json; charset=utf-8",
+                        resp.toString()
+                    )
+                }
+                method == "GET" && path == "/api/live_status" -> {
+                    val resp = JSONObject().apply {
+                        put("success", true)
+                        put("intercom", SelfControlIntercom.statusJson())
+                        put("tunnel", SelfControlTunnelBridge.statusJson())
+                        put("share", SelfControlQuickShare.statusJson())
+                        put("lan_url", configUrl())
+                        put("ws_intercom", "ws://${lanIpv4() ?: "127.0.0.1"}:$PORT/ws/intercom")
+                        put("cam_mjpeg", "${configUrl()}/cam/mjpeg")
+                    }
+                    writeResponse(sock.getOutputStream(), 200, "application/json; charset=utf-8", resp.toString())
+                }
+                method == "POST" && path == "/api/intercom_mute" -> {
+                    val o = try {
+                        JSONObject(body.ifBlank { "{}" })
+                    } catch (_: Exception) {
+                        JSONObject()
+                    }
+                    SelfControlIntercom.setMutes(
+                        if (o.has("robot_tx_muted")) o.optBoolean("robot_tx_muted") else null,
+                        if (o.has("phone_tx_muted")) o.optBoolean("phone_tx_muted") else null
+                    )
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        SelfControlIntercom.statusJson().toString()
+                    )
+                }
+                method == "GET" && path == "/api/tunnel" -> {
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        SelfControlTunnelBridge.statusJson().toString()
+                    )
+                }
+                method == "POST" && path == "/api/tunnel" -> {
+                    val o = try {
+                        JSONObject(body.ifBlank { "{}" })
+                    } catch (_: Exception) {
+                        JSONObject()
+                    }
+                    val action = o.optString("action", "save")
+                    val resp = when (action) {
+                        "start" -> {
+                            if (o.has("relay_url")) {
+                                SelfControlTunnelBridge.applyConfig(o.optString("relay_url"), false)
+                            }
+                            SelfControlTunnelBridge.start()
+                            SelfControlTunnelBridge.statusJson()
+                        }
+                        "stop" -> {
+                            SelfControlTunnelBridge.stop()
+                            SelfControlTunnelBridge.statusJson().put("message", "Đã dừng tunnel")
+                        }
+                        else -> SelfControlTunnelBridge.applyConfig(
+                            o.optString("relay_url", SelfControlStore.getTunnelRelayUrl()),
+                            o.optBoolean("auto_start", true)
+                        )
+                    }
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        resp.toString()
+                    )
+                }
                 else -> writeResponse(sock.getOutputStream(), 404, "text/plain", "Not Found")
             }
         } catch (e: Exception) {
@@ -300,6 +496,45 @@ object SelfControlHttpServer {
         } catch (e: Exception) {
             Log.e(TAG, "load self_control.html: ${e.message}")
             "<html><body>Missing self_control.html</body></html>"
+        }
+    }
+
+    private fun assetContentType(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "html", "htm" -> "text/html; charset=utf-8"
+        "css" -> "text/css; charset=utf-8"
+        "js" -> "application/javascript; charset=utf-8"
+        "json" -> "application/json; charset=utf-8"
+        "svg" -> "image/svg+xml"
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
+        "mp3" -> "audio/mpeg"
+        else -> "application/octet-stream"
+    }
+
+    private fun writeAsset(sock: Socket, assetName: String, contentType: String) {
+        val ctx = appContext
+        if (ctx == null) {
+            writeResponse(sock.getOutputStream(), 404, "text/plain", "No context")
+            return
+        }
+        try {
+            val bytes = ctx.assets.open(assetName).use { it.readBytes() }
+            val headers = buildString {
+                append("HTTP/1.1 200 OK\r\n")
+                append("Content-Type: $contentType\r\n")
+                append("Content-Length: ${bytes.size}\r\n")
+                append("Cache-Control: no-cache\r\n")
+                append("Access-Control-Allow-Origin: *\r\n")
+                append("Connection: close\r\n")
+                append("\r\n")
+            }.toByteArray(Charsets.US_ASCII)
+            val out = sock.getOutputStream()
+            out.write(headers)
+            out.write(bytes)
+            out.flush()
+        } catch (e: Exception) {
+            Log.w(TAG, "asset $assetName: ${e.message}")
+            writeResponse(sock.getOutputStream(), 404, "text/plain", "Not Found")
         }
     }
 

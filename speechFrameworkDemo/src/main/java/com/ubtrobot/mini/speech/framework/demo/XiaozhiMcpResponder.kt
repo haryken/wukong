@@ -1,6 +1,7 @@
 package com.ubtrobot.mini.speech.framework.demo
 
 import android.util.Log
+import com.ubtrobot.mini.speech.framework.demo.selfcontrol.SelfControlGameContext
 import info.dourok.voicebot.protocol.MqttProtocol
 import info.dourok.voicebot.protocol.Protocol
 import kotlinx.coroutines.CompletableDeferred
@@ -192,6 +193,13 @@ object XiaozhiMcpResponder {
                             OttoMusicPlayer.stop()
                             toolCallResultBody(true, "ok")
                         }
+                        nm.startsWith("self.", ignoreCase = true)
+                            && nm.endsWith(".summarize", ignoreCase = true) -> {
+                            val gid = nm.substring("self.".length, nm.length - ".summarize".length)
+                            val wanted = if (gid.equals("game", ignoreCase = true)) null else gid
+                            val r = SelfControlGameContext.summarizeForXiaozhi(wanted)
+                            toolCallResultBody(r.first, r.second)
+                        }
                         else -> {
                             MiniRobotActionInvoker.dispatchFromXiaozhiJson(root)
                             toolCallResultBody(true, "ok")
@@ -352,6 +360,29 @@ object XiaozhiMcpResponder {
                 toolDef(
                     "self.otto.music.stop",
                     "Dừng phát nhạc YouTube đang chạy trên loa."
+                )
+            )
+            put(
+                toolDef(
+                    "self.chess.summarize",
+                    "Lấy thế cờ VUA hiện tại trên trang Trò chơi của robot (bàn cờ, lượt, nước gần nhất, lịch sử). " +
+                        "BẮT BUỘC gọi khi người dùng hỏi về ván cờ vua đang chơi: phân tích thế cờ, ai đang thắng, " +
+                        "nên đi nước nào. Sau đó nhận xét ngắn bằng tiếng Việt."
+                )
+            )
+            put(
+                toolDef(
+                    "self.xiangqi.summarize",
+                    "Lấy thế cờ TƯỚNG hiện tại trên trang Trò chơi của robot. " +
+                        "Gọi khi người dùng hỏi về ván cờ tướng đang chơi (phân tích, gợi ý nước)."
+                )
+            )
+            put(
+                toolDef(
+                    "self.game.summarize",
+                    "Lấy tình hình ván đang chơi trên trang Trò chơi của robot, bất kể game nào " +
+                        "(caro, cờ vây, cờ đam, cờ lật, connect four, sudoku, 2048, uno, poker, xì dách, wordle…). " +
+                        "Gọi khi người dùng hỏi về ván/game đang chơi mà không rõ là game gì, hoặc game không phải cờ vua/cờ tướng."
                 )
             )
         }

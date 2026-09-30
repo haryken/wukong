@@ -17,15 +17,15 @@ public final class LlmEmotionEyeMapper {
 
     static {
         /* 1 Chào */
-        reg("greeting", "emo_001");
-        reg("say_hi", "emo_001");
+        reg("greeting", "emo_007");
+        reg("say_hi", "emo_007");
 
         /* 2 Vẫy tay */
-        reg("wave", "emo_003", "emo_001");
+        reg("wave", "emo_003");
 
         /* 3 Vui */
-        reg("happy", "emo_001");
-        reg("laughing", "emo_001");
+        reg("happy", "emo_008", "emo_007", "emo_003", "emo_009", "emo_012", "emo_014");
+        reg("laughing", "emo_008", "emo_007", "emo_003", "emo_009", "emo_012", "emo_014");
 
         /* 4 Hài / nghịch */
         reg("funny", "emo_008");
@@ -77,13 +77,13 @@ public final class LlmEmotionEyeMapper {
         /* 17 Bối rối */
         reg("confused", "emo_030");
 
-        /* 18 Trung tính */
+        /* 18 Trung tính / mặc định */
         reg("neutral", "emo_027");
         reg("relaxed", "emo_027");
         reg("delicious", "emo_027");
 
         /* 19 Khóc */
-        reg("crying", "emo_011");
+        reg("crying", "emo_011", "emo_009");
     }
 
     private static void reg(String emotionKey, String... eyes) {

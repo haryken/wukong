@@ -9,6 +9,7 @@ import com.ubtrobot.express.listeners.AnimationListener
 import com.ubtrobot.mini.speech.framework.demo.ActivationEyeDisplay
 import com.ubtrobot.mini.speech.framework.demo.AlphaMiniRomDanceSkills
 import com.ubtrobot.mini.speech.framework.demo.MiniRobotActionInvoker
+import com.ubtrobot.mini.speech.framework.demo.RobotBuiltinActionCatalog
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -30,16 +31,25 @@ object SelfControlRobotTryout {
     fun listActions(): JSONObject {
         val dances = JSONArray()
         val skills = JSONArray()
+        val motions = RobotBuiltinActionCatalog.listTryoutSilentMotions()
         val names = loadAllSkillNames()
+        val silentSkillKeys = setOf(
+            "NOD", "NODDING", "SHAKE_HAND", "HANDSHAKE", "HAND_KISS", "HUG", "BE_CUTE",
+            "SAY_HI", "HELLO", "FRIGHTEN", "SCARE", "LAUGH", "WELCOME", "GOODBYE",
+            "KUNGFU", "KUNG_FU", "TAIJI"
+        )
         for (n in names) {
             val item = JSONObject().put("id", n).put("label", n)
             if (AlphaMiniRomDanceSkills.isRomDanceSkillName(n)) {
                 dances.put(item)
+            } else if (silentSkillKeys.any { it.equals(n, ignoreCase = true) }
+                || RobotBuiltinActionCatalog.silentActionIdForSkill(n).isNotEmpty()) {
+                // Đã có bản silent trong motions — bỏ khỏi grid SkillApi (tránh SFX)
+                continue
             } else {
                 skills.put(item)
             }
         }
-        // Fallback dances nếu ROM chưa trả skill dance
         if (dances.length() == 0) {
             for (n in AlphaMiniRomDanceSkills.resolveDancePool()) {
                 dances.put(JSONObject().put("id", n).put("label", n))
@@ -47,8 +57,10 @@ object SelfControlRobotTryout {
         }
         return JSONObject().apply {
             put("success", true)
+            put("motions", motions)
             put("dances", dances)
             put("skills", skills)
+            put("motion_count", motions.length())
             put("dance_count", dances.length())
             put("skill_count", skills.length())
         }
@@ -67,18 +79,55 @@ object SelfControlRobotTryout {
         }
     }
 
-    fun playSkill(name: String?): JSONObject {
+    /** @param danceMusic chỉ ảnh hưởng bài múa: true = có nhạc, false = múa không nhạc. */
+    fun playSkill(name: String?, danceMusic: Boolean = true): JSONObject {
         val n = name?.trim().orEmpty()
         if (n.isEmpty()) {
             return JSONObject().put("success", false).put("error", "missing name")
         }
         return try {
             MiniRobotActionInvoker.suppressLlmEmotionForRobotAction(25_000L)
+            if (AlphaMiniRomDanceSkills.isRomDanceSkillName(n)) {
+                val ok = MiniRobotActionInvoker.startSkillByNameForTryout(n, danceMusic)
+                return JSONObject().apply {
+                    put("success", ok)
+                    put("name", n)
+                    put("type", "dance")
+                    put("music", danceMusic)
+                    put("sfx_muted", !danceMusic)
+                    if (!ok) put("error", "SkillApi không chạy được điệu \"$n\"")
+                }
+            }
+            // Tắt SFX hệ thống cho nút động tác (kể cả I_FELL_OUT_OF_LOVE); nhảy múa giữ nhạc ở trên.
+            MiniRobotActionInvoker.beginTryoutSfxMute(20_000L)
+            val silentId = RobotBuiltinActionCatalog.silentActionIdForSkill(n)
+            if (silentId.isNotEmpty()) {
+                val ok = MiniRobotActionInvoker.invokePlayActionExact(silentId)
+                return JSONObject().apply {
+                    put("success", ok)
+                    put("name", n)
+                    put("action_id", silentId)
+                    put("type", "action_silent")
+                    put("sfx_muted", true)
+                    if (!ok) put("error", "ActionApi.playAction(\"$silentId\") thất bại")
+                }
+            }
+            val guessed = MiniRobotActionInvoker.tryPlayActionGuessForSkill(n)
+            if (guessed.isNotEmpty()) {
+                return JSONObject().apply {
+                    put("success", true)
+                    put("name", n)
+                    put("action_id", guessed)
+                    put("type", "action_guess")
+                    put("sfx_muted", true)
+                }
+            }
             val ok = MiniRobotActionInvoker.startSkillByNameForTryout(n)
             JSONObject().apply {
                 put("success", ok)
                 put("name", n)
                 put("type", "skill")
+                put("sfx_muted", true)
                 if (!ok) put("error", "SkillApi/SkillHelper không chạy được \"$n\"")
             }
         } catch (e: Exception) {

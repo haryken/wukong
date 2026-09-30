@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#050505">
+    <title>Trò chơi — Alpha Mini</title>
+    <link rel="stylesheet" href="games_base.css">
+    <link rel="stylesheet" href="chess.css">
+    <style>
+        .games-topbar {
+            width: 94%;
+            max-width: 900px;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin: 10px auto 0;
+        }
+        .games-home-link {
+            display: inline-flex;
+            align-items: center;
+            min-height: 36px;
+            padding: 6px 12px;
+            color: #67e8f9;
+            text-decoration: none;
+            font-size: 15px;
+            font-weight: 600;
+            background: #272727;
+            border: 1px solid #3a3a3a;
+            border-radius: 10px;
+            white-space: nowrap;
+        }
+        .games-home-link:hover { border-color: rgba(34, 211, 238, 0.45); }
+        #games { margin-top: 10px; }
+        /* Xiaozhi button removed: two comment modes instead of three. */
+        .chess-mode-btns.has-google { grid-template-columns: 1fr; }
+        @media (min-width: 420px) {
+            .chess-mode-btns.has-google { grid-template-columns: 1fr 1fr; }
+        }
+        .games-google-lang-row { text-align: left; }
+        .games-google-lang-row label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #b3b3b3;
+        }
+        .games-comment-strip {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin: 6px 0 8px;
+            padding: 8px 10px;
+            text-align: left;
+            font-size: 14px;
+            line-height: 1.4;
+            background: #1a2226;
+            border: 1px solid #2c3e44;
+            border-radius: 10px;
+            transition: border-color 0.3s, background 0.3s;
+        }
+        .games-comment-label {
+            flex-shrink: 0;
+            padding: 1px 8px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #050505;
+            background: #67e8f9;
+            border-radius: 999px;
+        }
+        .games-comment-text {
+            flex: 1;
+            min-width: 0;
+            color: #888;
+            overflow-wrap: anywhere;
+        }
+        .games-comment-strip.has-text .games-comment-text { color: #e6f9fc; }
+        .games-comment-strip.flash {
+            border-color: rgba(34, 211, 238, 0.7);
+            background: #1d2c31;
+        }
+        @media (max-width: 520px) {
+            .games-topbar .ui-lang-label { display: none; }
+            .games-topbar #uiLangSelect { min-width: 0; }
+        }
+    </style>
+</head>
+
+<body>
+    <header class="games-topbar">
+        <a class="games-home-link" href="/">← Self-Control</a>
+        <label class="ui-lang-wrap" for="uiLangSelect">
+            <span class="ui-lang-label" data-i18n="lang.label">Ngôn ngữ</span>
+            <select id="uiLangSelect" aria-label="Language">
+                <option value="vi">Tiếng Việt</option>
+                <option value="en">English</option>
+                <option value="it">Italiano</option>
+                <option value="zh">中文</option>
+            </select>
+        </label>
+    </header>
+
+    <div id="games" class="container mod-section tab-content active">
+        <h2 id="gamesHeading" data-i18n="games.title_lobby">🎮 Trò chơi</h2>
+
+        <!-- Step 1: pick game (minigame cards are appended by games_extra.js) -->
+        <div id="gamesStepPick" class="games-step">
+            <div class="help-box">
+                <strong data-i18n="games.pick_title">Bước 1 — Chọn trò chơi</strong>
+                <p data-i18n="games.pick_help">Chọn trò chơi xong sẽ chọn chế độ bình luận, rồi vào bàn chơi.</p>
+            </div>
+            <div class="games-pick-grid">
+                <button type="button" class="games-pick-card" id="gamesPickChess" data-game="chess">
+                    <span class="games-pick-ico" aria-hidden="true">♟️</span>
+                    <span class="games-pick-name" data-i18n="games.chess">Cờ vua</span>
+                    <small data-i18n="games.chess_sub">Bạn Trắng, robot Đen</small>
+                </button>
+                <button type="button" class="games-pick-card" id="gamesPickXiangqi" data-game="xiangqi">
+                    <span class="games-pick-ico" aria-hidden="true">🀄</span>
+                    <span class="games-pick-name" data-i18n="games.xiangqi">Cờ tướng</span>
+                    <small data-i18n="games.xiangqi_sub">Bạn Đỏ, robot Đen</small>
+                </button>
+                <button type="button" class="games-pick-card" data-game="caro">
+                    <span class="games-pick-ico" aria-hidden="true">⭕</span>
+                    <span class="games-pick-name" data-i18n="games.caro">Cờ caro</span>
+                    <small data-i18n="games.caro_sub">Freestyle + cấm 2 đầu — bạn X</small>
+                </button>
+                <button type="button" class="games-pick-card" data-game="connect4">
+                    <span class="games-pick-ico" aria-hidden="true">🔴</span>
+                    <span class="games-pick-name" data-i18n="games.connect4">Cờ thả cột</span>
+                    <small data-i18n="games.connect4_sub">Thả cột 7×6 — thắng 4</small>
+                </button>
+                <button type="button" class="games-pick-card" data-game="reversi">
+                    <span class="games-pick-ico" aria-hidden="true">⚫</span>
+                    <span class="games-pick-name" data-i18n="games.reversi">Cờ lật (Othello)</span>
+                    <small data-i18n="games.reversi_sub">Bạn đen, lật quân đối thủ</small>
+                </button>
+                <button type="button" class="games-pick-card" data-game="checkers">
+                    <span class="games-pick-ico" aria-hidden="true">⬛</span>
+                    <span class="games-pick-name" data-i18n="games.checkers">Cờ đam</span>
+                    <small data-i18n="games.checkers_sub">Bạn trắng, ăn bắt buộc</small>
+                </button>
+                <button type="button" class="games-pick-card" data-game="go9">
+                    <span class="games-pick-ico" aria-hidden="true">⚪</span>
+                    <span class="games-pick-name" data-i18n="games.go9">Cờ vây 9×9</span>
+                    <small data-i18n="games.go9_sub">Bạn đen, pass 2 lần kết thúc</small>
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 2: comment mode -->
+        <div id="gamesStepMode" class="games-step" hidden>
+            <div class="help-box">
+                <strong data-i18n="games.mode_title">Bước 2 — Chọn cách robot bình luận</strong>
+                <p><span data-i18n="games.mode_picked">Trò chơi:</span> <b id="gamesPickedGameLabel">Cờ vua</b></p>
+            </div>
+            <div class="chess-mode-panel" id="chessModeRow">
+                <div class="chess-mode-title"><span data-i18n="games.mode_label">Chế độ bình luận</span> <span id="chessModeStatus" class="chess-mode-status"></span></div>
+                <div class="chess-mode-btns has-google" role="group" aria-label="Comment mode">
+                    <button type="button" class="chess-mode-btn active" id="chessModeGoogleViBtn" data-mode="google_vi">
+                        <span data-i18n="games.mode_gvi">Giọng Google</span>
+                        <small data-i18n="games.mode_gvi_sub">Chọn ngôn ngữ bên dưới</small>
+                    </button>
+                    <button type="button" class="chess-mode-btn" id="chessModeSayTextBtn" data-mode="saytext">
+                        <span data-i18n="games.mode_st">Giọng robot bằng tiếng Anh</span>
+                    </button>
+                </div>
+                <div id="gamesGoogleLangRow" class="games-google-lang-row" style="margin-top:10px;">
+                    <label for="gamesGoogleLang" data-i18n="games.gvi_lang">Giọng bình luận Google</label>
+                    <select id="gamesGoogleLang" class="wireos-select" onchange="gamesOnGoogleLangChange()">
+                        <option value="vi" selected>Tiếng Việt</option>
+                        <option value="zh-CN">中文 (Tiếng Trung)</option>
+                        <option value="en">English (Anh)</option>
+                        <option value="it">Italiano (Ý)</option>
+                        <option value="ru">Русский (Nga)</option>
+                        <option value="fr">Français (Pháp)</option>
+                        <option value="de">Deutsch (Đức)</option>
+                        <option value="es">Español (Tây Ban Nha)</option>
+                        <option value="pt">Português (Bồ Đào Nha)</option>
+                    </select>
+                </div>
+                <p class="chess-mode-hint" id="chessModeHint">Bình luận bằng Google TTS theo ngôn ngữ đã chọn.</p>
+                <p class="chess-mode-hint" id="chessModeGoogleHint" hidden></p>
+            </div>
+            <div class="chess-mode-panel" id="gamesDiffRow">
+                <div class="chess-mode-title"><span data-i18n="games.diff_title">Cấp độ đối thủ</span> <span id="gamesDiffStatus" class="chess-mode-status"></span></div>
+                <div class="chess-mode-btns games-diff-btns" role="group" aria-label="Difficulty">
+                    <button type="button" class="chess-mode-btn games-diff-btn" data-level="easy">
+                        <span data-i18n="games.diff_easy">Dễ</span>
+                        <small data-i18n="games.diff_easy_sub">Bot yếu / hay sai</small>
+                    </button>
+                    <button type="button" class="chess-mode-btn games-diff-btn active" data-level="medium">
+                        <span data-i18n="games.diff_med">Trung bình</span>
+                        <small data-i18n="games.diff_med_sub">Bot khá (tìm vài nước)</small>
+                    </button>
+                    <button type="button" class="chess-mode-btn games-diff-btn" data-level="hard">
+                        <span data-i18n="games.diff_hard">Khó</span>
+                        <small data-i18n="games.diff_hard_sub">Bot mạnh (tìm sâu, gần kiện tướng)</small>
+                    </button>
+                </div>
+                <p class="chess-mode-hint" data-i18n="games.diff_hint">Chọn xong rồi bấm Chơi. Cấp độ cố định trong ván — muốn đổi thì thoát / ván mới và chọn lại.</p>
+            </div>
+            <div class="games-actions">
+                <button type="button" id="gamesBackToPickBtn" class="games-secondary-btn" data-i18n="games.back">← Đổi trò chơi</button>
+                <button type="button" id="gamesModeStartBtn" class="games-primary-btn" data-i18n="games.start">Chơi ván mới</button>
+            </div>
+        </div>
+
+        <!-- Step 3: play board -->
+        <div id="gamesStepChess" class="games-step" hidden>
+            <div class="games-play-guide" id="gamesPlayHelp">
+                <div class="games-play-guide-head">
+                    <span class="games-play-guide-ico" id="gamesPlayHelpIco" aria-hidden="true">♟️</span>
+                    <div>
+                        <strong id="gamesPlayHelpTitle" data-i18n="games.guide">Hướng dẫn</strong>
+                    </div>
+                </div>
+                <ol id="gamesPlayHelpList" class="games-play-guide-list">
+                    <li data-i18n="games.chess_help1" data-i18n-html="1">Bạn cầm <b>Trắng</b>, bot cầm Đen. Bấm ô → bấm ô đích.</li>
+                    <li data-i18n="games.chess_help2">Robot Alpha Mini bình luận từng nước đi bằng giọng Google.</li>
+                    <li data-i18n="games.chess_help3" data-i18n-html="1"><b>Thoát</b> — robot thông báo, rồi về danh sách trò chơi.</li>
+                    <li data-i18n="games.chess_help4">Bàn cờ chỉ hiện trên trang web (điện thoại / máy tính), không hiện trên robot.</li>
+                </ol>
+            </div>
+            <div class="chess-wrap" id="gamesBoardWrap">
+                <div class="chess-toolbar">
+                    <button type="button" id="gamesExitBtn" class="chess-btn chess-btn-exit" data-i18n="games.exit">Thoát</button>
+                    <button type="button" id="chessNewBtn" class="chess-btn chess-btn-new" data-i18n="games.new">Ván mới</button>
+                    <button type="button" id="gamesPassBtn" class="chess-btn" hidden data-i18n="games.pass">Bỏ lượt</button>
+                </div>
+                <div id="chessMeta" class="chess-meta"></div>
+                <div id="gamesCommentStrip" class="games-comment-strip" aria-live="polite">
+                    <span class="games-comment-label" data-i18n="games.comment_label">Bình luận</span>
+                    <span id="gamesCommentText" class="games-comment-text" data-i18n="games.comment_empty">Robot chưa bình luận.</span>
+                </div>
+                <div class="chess-stage" id="chessStage">
+                    <div class="chess-ranks" id="chessRanks" aria-hidden="true"></div>
+                    <div class="chess-board-col">
+                        <div id="chessBoard" class="chess-board" aria-label="Game board"></div>
+                        <div class="chess-files" id="chessFiles" aria-hidden="true"></div>
+                    </div>
+                </div>
+                <p class="chess-help" id="gamesPlayHint" data-i18n="games.hint_chess">Chọn quân → chọn ô đến. Phong hậu tự động.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/i18n_games.js"></script>
+    <script src="js/wg_core.js"></script>
+    <script src="js/engines/chess.js"></script>
+    <script src="js/engines/xiangqi.js"></script>
+    <script src="js/engines/caro.js"></script>
+    <script src="js/engines/connect4.js"></script>
+    <script src="js/engines/reversi.js"></script>
+    <script src="js/engines/checkers.js"></script>
+    <script src="js/engines/go9.js"></script>
+    <script src="js/engines/mg_tictactoe.js"></script>
+    <script src="js/engines/mg_sudoku.js"></script>
+    <script src="js/engines/mg_2048.js"></script>
+    <script src="js/engines/mg_mines.js"></script>
+    <script src="js/engines/mg_memory.js"></script>
+    <script src="js/engines/mg_battleship.js"></script>
+    <script src="js/engines/mg_simon.js"></script>
+    <script src="js/engines/mg_wordle.js"></script>
+    <script src="js/engines/mg_hangman.js"></script>
+    <script src="js/engines/mg_trivia.js"></script>
+    <script src="js/engines/mg_guess.js"></script>
+    <script src="js/engines/mg_uno.js"></script>
+    <script src="js/engines/mg_blackjack.js"></script>
+    <script src="js/engines/mg_poker.js"></script>
+    <script src="js/chess.js"></script>
+    <script src="js/games_extra.js"></script>
+    <script>
+        (function () {
+            var strip = document.getElementById('gamesCommentStrip');
+            var text = document.getElementById('gamesCommentText');
+            var flashTimer = null;
+
+            function resetComment() {
+                text.setAttribute('data-i18n', 'games.comment_empty');
+                text.removeAttribute('lang');
+                text.textContent = window.t ? t('games.comment_empty', 'Robot chưa bình luận.') : 'Robot chưa bình luận.';
+                strip.classList.remove('has-text', 'flash');
+            }
+
+            window.addEventListener('wg-speak', function (e) {
+                var d = (e && e.detail) || {};
+                if (!d.text) return;
+                // Drop data-i18n so a language switch doesn't overwrite the spoken line.
+                text.removeAttribute('data-i18n');
+                if (d.lang) text.setAttribute('lang', d.lang);
+                else text.removeAttribute('lang');
+                text.textContent = d.text;
+                strip.classList.add('has-text', 'flash');
+                clearTimeout(flashTimer);
+                flashTimer = setTimeout(function () { strip.classList.remove('flash'); }, 900);
+            });
+
+            ['gamesExitBtn', 'chessNewBtn', 'gamesModeStartBtn'].forEach(function (id) {
+                var btn = document.getElementById(id);
+                if (btn) btn.addEventListener('click', resetComment);
+            });
+        })();
+    </script>
+</body>
+
+</html>
