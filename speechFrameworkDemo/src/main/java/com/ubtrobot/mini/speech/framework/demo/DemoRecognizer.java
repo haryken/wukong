@@ -26,8 +26,13 @@ public class DemoRecognizer extends AbstractRecognizer {
    * HAL AEC có thể trả toàn 0 mãi – im tuyệt đối quá lâu thì mở lại AudioRecord.
    */
   private static final int DEAD_MIC_PEAK = 8;
-  private static final long DEAD_MIC_RESTART_MS = 4000;
-  private static final long DEAD_MIC_MIN_INTERVAL_MS = 15000;
+  private static final long DEAD_MIC_RESTART_MS = 1500;
+  /** Lúc robot đang phát TTS, AEC có thể nén gần 0 hợp lệ — chờ lâu hơn mới coi là chết. */
+  private static final long DEAD_MIC_RESTART_DURING_PLAYBACK_MS = 4000;
+  private static final long DEAD_MIC_MIN_INTERVAL_MS = 2000;
+  /** Restart liên tiếp mà mic vẫn 0 quá số lần này → giãn ra, tránh đập audioserver liên tục. */
+  private static final int DEAD_MIC_FAST_RETRIES = 6;
+  private static final long DEAD_MIC_SLOW_INTERVAL_MS = 10000;
   /** audioserver chết/đang khởi động lại → AudioRecord init lỗi; thử lại tới khi nó sống lại. */
   private static final int MIC_OPEN_MAX_RETRIES = 15;
   private static final long MIC_OPEN_RETRY_MS = 2000;
@@ -49,8 +54,10 @@ public class DemoRecognizer extends AbstractRecognizer {
   private volatile boolean loggedNoXiaozhiOnce = false;
   private volatile boolean loggedNoWakeFeederOnce = false;
   private volatile boolean kwsPausedForTalk = false;
+  private long zeroFramesNotSent = 0;
   private final AtomicBoolean deadMicRestarting = new AtomicBoolean(false);
   private volatile long lastDeadMicRestartMs = 0;
+  private volatile int deadMicRestartStreak = 0;
   private int micOpenFailures = 0;
   /** Cùng luồng PCM gửi vào wake word (hey mini) – đảm bảo audio đang gửi Xiaozhi cũng được nhận bởi Porcupine. */
   private WakeWordPcmFeeder wakeWordPcmFeeder;
@@ -129,6 +136,14 @@ public class DemoRecognizer extends AbstractRecognizer {
       }
     }
     if (xiaozhiSessionManager != null) {
+      // Mic kẹt trả toàn 0: gửi lên thì ASR server bịa câu ("Hẹn gặp lại ... video tiếp theo") → tưởng tạm biệt.
+      if (peakAbs(frame, frame.length) <= DEAD_MIC_PEAK) {
+        zeroFramesNotSent++;
+        if (zeroFramesNotSent == 1 || zeroFramesNotSent % 50 == 0) {
+          Log.w(TAG, "Mic trả toàn 0 – không gửi server (đã bỏ " + zeroFramesNotSent + " frame)");
+        }
+        return;
+      }
       xiaozhiSessionManager.sendPcmFrameFromJava(frame);
     } else {
       if (!loggedNoXiaozhiOnce) {
@@ -230,15 +245,28 @@ public class DemoRecognizer extends AbstractRecognizer {
         long nowMs = System.currentTimeMillis();
         if (peakAbs(readBuf, read) > DEAD_MIC_PEAK) {
           silentSinceMs = 0;
+          if (deadMicRestartStreak > 0) {
+            Log.i(TAG, "Mic sống lại sau " + deadMicRestartStreak + " lần restart");
+            deadMicRestartStreak = 0;
+          }
         } else if (silentSinceMs == 0) {
           silentSinceMs = nowMs;
-        } else if (nowMs - silentSinceMs >= DEAD_MIC_RESTART_MS
-            && nowMs - lastDeadMicRestartMs >= DEAD_MIC_MIN_INTERVAL_MS
-            && !deadMicRestarting.get()) {
-          lastDeadMicRestartMs = nowMs;
-          Log.w(TAG, "Mic trả toàn 0 suốt " + (nowMs - silentSinceMs) + "ms (AEC/HAL kẹt sau khi phát âm thanh) → restart AudioRecord");
-          requestMicRestart();
-          break;
+        } else {
+          XiaozhiSessionManager session = xiaozhiSessionManager;
+          boolean playing = session != null && session.isPlaybackOrGreetingActive();
+          long deadAfterMs = playing ? DEAD_MIC_RESTART_DURING_PLAYBACK_MS : DEAD_MIC_RESTART_MS;
+          long minIntervalMs = deadMicRestartStreak < DEAD_MIC_FAST_RETRIES
+              ? DEAD_MIC_MIN_INTERVAL_MS : DEAD_MIC_SLOW_INTERVAL_MS;
+          if (nowMs - silentSinceMs >= deadAfterMs
+              && nowMs - lastDeadMicRestartMs >= minIntervalMs
+              && !deadMicRestarting.get()) {
+            lastDeadMicRestartMs = nowMs;
+            deadMicRestartStreak++;
+            Log.w(TAG, "Mic trả toàn 0 suốt " + (nowMs - silentSinceMs) + "ms (AEC/HAL kẹt sau khi phát âm thanh) → restart AudioRecord (lần "
+                + deadMicRestartStreak + ")");
+            requestMicRestart();
+            break;
+          }
         }
         pcmAlign.write(readBuf, 0, read);
         byte[] data = pcmAlign.toByteArray();

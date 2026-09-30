@@ -29,8 +29,6 @@ import kotlinx.coroutines.TimeoutCancellationException
 import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.Locale
-
 /**
  * Xiaozhi voice session qua WebSocket.
  * @param audioSessionId Session dùng chung với AudioRecord (AEC).
@@ -150,14 +148,6 @@ class XiaozhiWebSocketSessionManager(
     /** WS đang mở + đã gửi listen + hết cooldown mới gửi Opus (tránh audio trước listen → server không STT). */
     private fun ensureChannelOpen(): Boolean = protocol.isAudioChannelOpened()
 
-    private fun isLikelySessionEndStt(text: String): Boolean {
-        val t = text.trim().lowercase(Locale.ROOT)
-        if (t.isEmpty()) return false
-        return t == "goodbye" || t == "bye" || t.contains("goodbye") || t.contains("good bye")
-            || t.contains("tạm biệt") || t.contains("tam biet") || t.contains("hẹn gặp")
-            || t.contains("hen gap") || t.contains("bye bye")
-    }
-
     private fun pcmBlockReason(): String? {
         // Chỉ chặn khi đang phát nhạc local — không dùng musicOnlyMode/isActive (dễ kẹt → chat chậm).
         if (OttoMusicPlayer.isPlaying()) return "đang phát nhạc local"
@@ -202,10 +192,6 @@ class XiaozhiWebSocketSessionManager(
             || t.equals("nhạc thất bại", ignoreCase = true)
             || t.equals("phát hết nhạc", ignoreCase = true)
         ) {
-            return
-        }
-        if (isLikelySessionEndStt(t)) {
-            cancelIdleNudgeWatch("goodbye STT")
             return
         }
         lastUserSpokeMs = System.currentTimeMillis()
@@ -604,13 +590,8 @@ class XiaozhiWebSocketSessionManager(
                             noSttListenOnlyAttempts = 0
                             val text = json.optString("text", "")
                             Log.i(TAG, "[STT] Server trả STT: text=\"$text\" – nếu không thấy khi nói = server không trả lời")
-                            if (isLikelySessionEndStt(text)) {
-                                sessionClosedAwaitWake = true
-                                cancelIdleNudgeWatch("session end")
-                                Log.i(TAG, "[Session] STT kết thúc hội thoại – sau TTS/WS đóng không tự reopen")
-                            } else {
-                                noteUserSpoke(text)
-                            }
+                            // Kết thúc hội thoại do server quyết định (đóng WS) — không dò từ khoá tạm biệt.
+                            noteUserSpoke(text)
                             // Skill robot chỉ qua MCP tools/call — không khớp keyword STT (tránh chạy 2 lần).
                         }
                         "mcp" -> {
@@ -760,6 +741,8 @@ class XiaozhiWebSocketSessionManager(
                                             "WebSocket đã đóng – không tự reopen/ting/listen; hey mini hoặc chạm đầu"
                                         )
                                         finishFirstGreetingPhase("WS đóng chờ wake", forceClear = true)
+                                        // HAL MTK hay trả mic toàn 0 ngay sau TTS tạm biệt → reset sẵn để gọi wake được liền.
+                                        mainHandler.post { onTtsStoppedRestartMic?.invoke() }
                                     }
                                 }
                             }
