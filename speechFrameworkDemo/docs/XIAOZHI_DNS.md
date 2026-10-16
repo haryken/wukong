@@ -80,6 +80,22 @@ DNS router chết.
 Chưa áp dụng: kết nối TCP tới **MQTT broker** (thư viện Paho tự tra DNS). Nếu robot dùng MQTT và lỗi ở
 bước kết nối broker, dùng cách ở mục 4.
 
+### Chuyển qua lại DNS mới / DNS như cũ (web :8080)
+
+Trang `http://<IP robot>:8080` → Cấu hình robot → **🌐 DNS Xiaozhi**:
+
+| Chế độ | Cách làm |
+|---|---|
+| DNS mới (`smart`, mặc định) | DNS router tối đa 3 s → DoH song song → IP đã nhớ (như trên) |
+| DNS như cũ (`system`) | Chỉ `Dns.SYSTEM` của Android, không giới hạn thời gian — y như trước khi có `XiaozhiDns` |
+
+- Lưu vào SharedPreferences `xiaozhi_dns_settings` (giữ qua khởi động lại). Áp dụng từ lần phân giải kế tiếp,
+  kết nối đang mở giữ nguyên → đánh thức lại / chạm đầu để thử.
+- Nút **Kiểm tra** phân giải thử `api.tenclass.net` bằng chế độ đang lưu, hiện IP, nguồn (DNS hệ thống / DoH /
+  IP đã nhớ) và thời gian — dùng để so sánh hai chế độ trên cùng một mạng.
+- API: `GET /api/xiaozhi_dns`, `POST /api/xiaozhi_dns` body `{"mode":"smart"|"system"}`,
+  `POST /api/xiaozhi_dns/test`.
+
 ### Đọc log
 
 ```bash
@@ -93,6 +109,8 @@ adb logcat -s XiaozhiDns WS
 | `api.tenclass.net → 47.76.65.170 qua DoH AliDNS (3400ms)` | Đã vượt qua bằng DoH |
 | `... DNS hệ thống + DoH đều lỗi → dùng IP đã nhớ [...]` | Mạng chặn cả DoH, dùng IP cũ |
 | `XiaozhiDns: không phân giải được ...` | Mất mạng hẳn hoặc chưa từng kết nối được lần nào |
+| `chế độ DNS: system` / `đổi chế độ DNS → system` | Đang dùng DNS như cũ |
+| `... qua DNS hệ thống, chế độ cũ (11000ms)` | Chế độ cũ mà DNS router chậm — nên chuyển về DNS mới |
 
 ### Mang sang robot / app khác
 

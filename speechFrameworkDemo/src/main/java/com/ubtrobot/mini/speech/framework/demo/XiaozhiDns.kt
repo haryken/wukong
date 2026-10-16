@@ -19,16 +19,24 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
 /**
- * DNS cho kết nối Xiaozhi (WebSocket, OTA, UDP): DNS hệ thống (giới hạn thời gian, ưu tiên IPv4)
- * → DNS-over-HTTPS (AliDNS / Cloudflare / Google, hỏi song song) → IP đã kết nối được lần trước.
+ * DNS cho kết nối Xiaozhi (WebSocket, OTA, UDP). Hai chế độ, đổi ở web :8080 (GET/POST /api/xiaozhi_dns):
+ * - [MODE_SMART]: DNS hệ thống (giới hạn thời gian, ưu tiên IPv4) → DNS-over-HTTPS (AliDNS / Cloudflare /
+ *   Google, hỏi song song) → IP đã kết nối được lần trước.
+ * - [MODE_SYSTEM]: chỉ DNS hệ thống của Android, không giới hạn thời gian (như trước khi có XiaozhiDns).
  * Xem docs/XIAOZHI_DNS.md.
  */
 object XiaozhiDns : Dns {
   private const val TAG = "XiaozhiDns"
+  const val MODE_SMART = "smart"
+  const val MODE_SYSTEM = "system"
+  private val MODES = setOf(MODE_SMART, MODE_SYSTEM)
+  const val TEST_HOST = "api.tenclass.net"
   /** Router có DNS IPv6 chết làm resolver Android chờ ~10 s rồi mới thử DNS thứ hai – quá hạn server hello. */
   private const val SYSTEM_TIMEOUT_MS = 3000L
   private const val DOH_TIMEOUT_MS = 4000L
   private const val PREFS_NAME = "xiaozhi_dns_cache"
+  private const val SETTINGS_PREFS = "xiaozhi_dns_settings"
+  private const val K_MODE = "mode"
 
   /** URL dùng IP trực tiếp → gọi DoH không cần DNS. Chứng chỉ của 3 dịch vụ này có IP trong SAN. */
   private val DOH_PROVIDERS = listOf(
@@ -44,6 +52,10 @@ object XiaozhiDns : Dns {
   }
   private val memCache = ConcurrentHashMap<String, List<InetAddress>>()
   @Volatile private var prefs: SharedPreferences? = null
+  @Volatile private var settings: SharedPreferences? = null
+  @Volatile var mode: String = MODE_SMART
+    private set
+  @Volatile private var lastLookup: JSONObject? = null
 
   private val dohClient: OkHttpClient by lazy {
     OkHttpClient.Builder()
@@ -53,12 +65,61 @@ object XiaozhiDns : Dns {
   }
 
   fun init(context: Context) {
-    prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val app = context.applicationContext
+    prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val s = app.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+    settings = s
+    mode = s.getString(K_MODE, null)?.takeIf { it in MODES } ?: MODE_SMART
+    Log.i(TAG, "chế độ DNS: $mode")
+  }
+
+  /** Áp dụng cho lần phân giải kế tiếp (kết nối đang mở giữ nguyên). */
+  fun setMode(newMode: String): Boolean {
+    if (newMode !in MODES) return false
+    mode = newMode
+    settings?.edit()?.putString(K_MODE, newMode)?.apply()
+    Log.i(TAG, "đổi chế độ DNS → $newMode")
+    return true
+  }
+
+  fun statusJson(): JSONObject = JSONObject().apply {
+    put("success", true)
+    put("mode", mode)
+    put("test_host", TEST_HOST)
+    lastLookup?.let {
+      val copy = JSONObject(it.toString())
+      copy.put("ago_ms", System.currentTimeMillis() - it.optLong("at"))
+      put("last", copy)
+    }
+  }
+
+  /** Phân giải thử [TEST_HOST] bằng chế độ hiện tại (chặn tới ~7 s). */
+  fun testJson(): JSONObject {
+    try {
+      lookup(TEST_HOST)
+    } catch (_: UnknownHostException) {
+    }
+    return statusJson()
   }
 
   override fun lookup(hostname: String): List<InetAddress> {
     if (IPV4.matches(hostname) || hostname.contains(':')) return Dns.SYSTEM.lookup(hostname)
     val start = System.currentTimeMillis()
+
+    if (mode == MODE_SYSTEM) {
+      val ips = try {
+        Dns.SYSTEM.lookup(hostname)
+      } catch (e: UnknownHostException) {
+        noteLookup(hostname, null, "DNS hệ thống (như cũ)", start, e.message ?: "không phân giải được")
+        throw e
+      }
+      noteLookup(hostname, ips, "DNS hệ thống (như cũ)", start, null)
+      val ms = System.currentTimeMillis() - start
+      if (ms > 1000) {
+        Log.i(TAG, "$hostname → ${ips.joinToString(",") { it.hostAddress }} qua DNS hệ thống, chế độ cũ (${ms}ms)")
+      }
+      return ips
+    }
 
     systemLookup(hostname)?.let {
       remember(hostname, it, "DNS hệ thống", start)
@@ -70,9 +131,26 @@ object XiaozhiDns : Dns {
     }
     cached(hostname)?.let {
       Log.w(TAG, "$hostname: DNS hệ thống + DoH đều lỗi → dùng IP đã nhớ $it")
+      noteLookup(hostname, it, "IP đã nhớ", start, null)
       return it
     }
-    throw UnknownHostException("XiaozhiDns: không phân giải được $hostname (DNS hệ thống, DoH, cache đều lỗi)")
+    val msg = "không phân giải được $hostname (DNS hệ thống, DoH, cache đều lỗi)"
+    noteLookup(hostname, null, "", start, msg)
+    throw UnknownHostException("XiaozhiDns: $msg")
+  }
+
+  private fun noteLookup(host: String, ips: List<InetAddress>?, source: String, startMs: Long, error: String?) {
+    lastLookup = JSONObject().apply {
+      put("host", host)
+      put("mode", mode)
+      put("ms", System.currentTimeMillis() - startMs)
+      put("at", System.currentTimeMillis())
+      if (ips != null) {
+        put("ips", ips.joinToString(",") { it.hostAddress })
+        put("source", source)
+      }
+      if (error != null) put("error", error)
+    }
   }
 
   private fun systemLookup(host: String): List<InetAddress>? {
@@ -151,6 +229,7 @@ object XiaozhiDns : Dns {
     if (source != "DNS hệ thống" || ms > 1000) {
       Log.i(TAG, "$host → $text qua $source (${ms}ms)")
     }
+    noteLookup(host, ips, source, startMs, null)
     memCache[host] = ips
     prefs?.edit()?.putString(host, text)?.apply()
   }

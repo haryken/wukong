@@ -82,6 +82,7 @@
             <button type="button" class="bot-nav-item" data-section="bot-unit" onclick="showBotSection('bot-unit')"><span class="bot-ico">📖</span><span data-i18n="bot.unit">Unit</span></button>
             <button type="button" class="bot-nav-item" data-section="bot-music" onclick="showBotSection('bot-music')"><span class="bot-ico">🎵</span><span data-i18n="bot.music">Server nhạc</span></button>
             <button type="button" class="bot-nav-item" data-section="bot-wake" onclick="showBotSection('bot-wake'); loadWakeEngine()"><span class="bot-ico">🎙️</span><span>Đánh thức</span></button>
+            <button type="button" class="bot-nav-item" data-section="bot-dns" onclick="showBotSection('bot-dns'); loadXiaozhiDns()"><span class="bot-ico">🌐</span><span>DNS Xiaozhi</span></button>
         </div>
         <hr class="smallhr">
 
@@ -183,6 +184,26 @@
             </div>
 
             <button type="button" class="btn btn-settings-save" id="btn_save_wake" onclick="saveWakeEngine()">💾 Lưu engine / độ nhạy</button>
+        </div>
+
+        <div id="bot-dns" class="bot-section">
+            <h3>🌐 <span>DNS Xiaozhi</span></h3>
+            <div class="help-box"><strong data-i18n="common.howto">Cách dùng</strong><ol>
+                <li>Chọn cách robot tìm địa chỉ server Xiaozhi rồi bấm Lưu — áp dụng từ lần kết nối kế tiếp (đánh thức lại / chạm đầu).</li>
+                <li>DNS mới (khuyên dùng): hỏi DNS của router tối đa 3 giây; router chậm / chặn → hỏi DNS công cộng qua HTTPS (AliDNS, Cloudflare, Google); vẫn lỗi → dùng IP đã kết nối được lần trước.</li>
+                <li>DNS như cũ: chỉ hỏi DNS của router, không giới hạn thời gian. Router có DNS IPv6 chết có thể chờ ~11 giây → kết nối Xiaozhi quá hạn.</li>
+                <li>Bấm "Kiểm tra" để phân giải thử api.tenclass.net bằng chế độ đang lưu và xem mất bao lâu.</li>
+            </ol></div>
+            <div class="live-status" id="dns_status">Đang tải…</div>
+
+            <label for="dns_mode">Chế độ DNS</label>
+            <select id="dns_mode" class="wake-select">
+                <option value="smart">DNS mới (router 3s → DoH → IP đã nhớ)</option>
+                <option value="system">DNS như cũ (chỉ DNS router)</option>
+            </select>
+
+            <button type="button" class="btn btn-settings-save" id="btn_save_dns" onclick="saveXiaozhiDns()">💾 Lưu chế độ DNS</button>
+            <button type="button" class="btn btn-dismiss-qr" style="margin-top:8px" id="btn_test_dns" onclick="testXiaozhiDns()">🔍 Kiểm tra</button>
         </div>
 
         <div class="sc-confirm" id="sc_confirm" hidden>
@@ -973,6 +994,69 @@
         function resetMusicServer() {
             document.getElementById('music_server_url').value = DEFAULT_MUSIC_SERVER;
             saveMusicServer();
+        }
+
+        const DNS_MODE_NAMES = { smart: 'DNS mới', system: 'DNS như cũ' };
+
+        function dnsRenderStatus(d) {
+            let txt = 'Đang dùng: ' + (DNS_MODE_NAMES[d.mode] || d.mode);
+            const last = d.last;
+            if (last) {
+                const agoSec = Math.max(0, Math.round((last.ago_ms || 0) / 1000));
+                const at = agoSec < 60 ? agoSec + ' giây trước' : Math.round(agoSec / 60) + ' phút trước';
+                txt += ' · Lần phân giải cuối (' + at + ', ' + (DNS_MODE_NAMES[last.mode] || last.mode) + '): ' + last.host;
+                txt += last.error
+                    ? ' ❌ ' + last.error + ' sau ' + last.ms + 'ms'
+                    : ' → ' + last.ips + ' qua ' + last.source + ' (' + last.ms + 'ms)';
+            } else {
+                txt += ' · Chưa phân giải lần nào từ khi mở app';
+            }
+            document.getElementById('dns_status').textContent = txt;
+        }
+
+        async function loadXiaozhiDns() {
+            try {
+                const d = await (await fetch('/api/xiaozhi_dns')).json();
+                document.getElementById('dns_mode').value = d.mode || 'smart';
+                dnsRenderStatus(d);
+            } catch (err) {
+                document.getElementById('dns_status').textContent = 'Lỗi tải: ' + err.message;
+            }
+        }
+
+        async function saveXiaozhiDns() {
+            const btn = document.getElementById('btn_save_dns');
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/api/xiaozhi_dns', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: document.getElementById('dns_mode').value })
+                });
+                const d = await resp.json();
+                if (!resp.ok || !d.success) {
+                    showToast('❌ ' + (d.error || 'Lưu thất bại'));
+                } else {
+                    showToast('✅ Đã lưu: ' + (DNS_MODE_NAMES[d.mode] || d.mode));
+                    dnsRenderStatus(d);
+                }
+            } catch (err) {
+                showToast('Lỗi: ' + err.message);
+            }
+            btn.disabled = false;
+        }
+
+        async function testXiaozhiDns() {
+            const btn = document.getElementById('btn_test_dns');
+            btn.disabled = true;
+            document.getElementById('dns_status').textContent = '⏳ Đang phân giải thử…';
+            try {
+                const d = await (await fetch('/api/xiaozhi_dns/test', { method: 'POST' })).json();
+                dnsRenderStatus(d);
+            } catch (err) {
+                document.getElementById('dns_status').textContent = 'Lỗi kiểm tra: ' + err.message;
+            }
+            btn.disabled = false;
         }
 
         // Server đọc body theo số ký tự = Content-Length (byte) → body phải thuần ASCII.

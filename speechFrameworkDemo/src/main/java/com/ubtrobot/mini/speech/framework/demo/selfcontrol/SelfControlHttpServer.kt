@@ -3,6 +3,7 @@ package com.ubtrobot.mini.speech.framework.demo.selfcontrol
 import android.content.Context
 import android.util.Log
 import com.ubtrobot.mini.speech.framework.demo.WakeEngineSettings
+import com.ubtrobot.mini.speech.framework.demo.XiaozhiDns
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -328,6 +329,37 @@ object SelfControlHttpServer {
                         if (resp.optBoolean("success")) 200 else 400,
                         "application/json; charset=utf-8",
                         resp.toString()
+                    )
+                }
+                method == "GET" && path == "/api/xiaozhi_dns" -> {
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        XiaozhiDns.statusJson().toString()
+                    )
+                }
+                method == "POST" && path == "/api/xiaozhi_dns" -> {
+                    val mode = try {
+                        JSONObject(body.ifBlank { "{}" }).optString("mode")
+                    } catch (e: Exception) {
+                        ""
+                    }
+                    val ok = XiaozhiDns.setMode(mode)
+                    val resp = if (ok) {
+                        XiaozhiDns.statusJson()
+                    } else {
+                        JSONObject().put("success", false).put("error", "Chế độ DNS không hợp lệ: $mode")
+                    }
+                    writeResponse(
+                        sock.getOutputStream(),
+                        if (ok) 200 else 400,
+                        "application/json; charset=utf-8",
+                        resp.toString()
+                    )
+                }
+                method == "POST" && path == "/api/xiaozhi_dns/test" -> {
+                    writeResponse(
+                        sock.getOutputStream(), 200, "application/json; charset=utf-8",
+                        XiaozhiDns.testJson().toString()
                     )
                 }
                 method == "GET" && path == "/api/config" -> {

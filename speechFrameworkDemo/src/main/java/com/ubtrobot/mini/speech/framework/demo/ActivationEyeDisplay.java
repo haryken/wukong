@@ -64,8 +64,10 @@ public class ActivationEyeDisplay {
 
   private static final long IP_HOLD_MS = 10_000L;
   private static final long CODE_HOLD_MS = 8_000L;
-  /** URL + QR trên mắt (wifi provision / Self-Control): ~1 phút. */
+  /** URL + QR Self-Control (đã có Wi‑Fi, gõ đầu 2 lần / MCP): ~1 phút. */
   private static final long SELF_CONTROL_HOLD_MS = 60_000L;
+  /** SoftAP / mất Wi‑Fi: QR hotspot giữ lâu hơn để kịp nối điện thoại. */
+  private static final long WIFI_PROVISION_HOLD_MS = 5 * 60_000L;
   /** Chống blink hệ thống đè QR — reclaim nhanh hơn chu kỳ chớp mắt. */
   private static final long QR_RECLAIM_MS = 400L;
   private static final long WIFI_STATUS_HOLD_MS = 5_000L;
@@ -396,7 +398,7 @@ public class ActivationEyeDisplay {
           + "s (giữ eye-all HIGH + redraw ~400ms)");
 
       // Blink/express hệ thống đè bitmap → QR “chớp theo”. Reclaim nhanh, không đợi 2.5s.
-      holdQrAgainstBlink(epoch, api, left, right);
+      holdQrAgainstBlink(epoch, api, left, right, SELF_CONTROL_HOLD_MS);
       if (eyeEpoch.get() == epoch) {
         stickyConfigEyes.set(false);
         qrShowing.set(false);
@@ -423,7 +425,7 @@ public class ActivationEyeDisplay {
 
   /**
    * SoftAP provision: mắt trái = tên hotspot + URL portal, mắt phải = QR.
-   * Giữ {@value #SELF_CONTROL_HOLD_MS} ms.
+   * Giữ {@value #WIFI_PROVISION_HOLD_MS} ms.
    */
   public static void showWifiProvisionUrlAndQr(String apSsid, String portalUrl) {
     if (portalUrl == null || portalUrl.trim().isEmpty()) {
@@ -433,7 +435,8 @@ public class ActivationEyeDisplay {
     final String u = portalUrl.trim();
     final String ssid = apSsid == null ? "" : apSsid.trim();
     final int epoch = eyeEpoch.incrementAndGet();
-    Log.i(TAG, "Provision mắt: LEFT=SSID+URL RIGHT=QR 60s → ssid=" + ssid + " url=" + u);
+    Log.i(TAG, "Provision mắt: LEFT=SSID+URL RIGHT=QR "
+        + (WIFI_PROVISION_HOLD_MS / 1000) + "s → ssid=" + ssid + " url=" + u);
     notifyUi((ssid.isEmpty() ? "" : ssid + "\n") + u);
     qrShowing.set(true);
     stickyConfigEyes.set(true);
@@ -456,12 +459,13 @@ public class ActivationEyeDisplay {
       if (!rightOk) {
         drawOneEye(api, right, EYE_BOTH, "BOTH-QR");
       }
-      holdQrAgainstBlink(epoch, api, left, right);
+      holdQrAgainstBlink(epoch, api, left, right, WIFI_PROVISION_HOLD_MS);
       if (eyeEpoch.get() == epoch) {
         stickyConfigEyes.set(false);
         qrShowing.set(false);
         restoreNormalEyesFast();
-        Log.i(TAG, "Provision URL+QR hết 60s — restore mắt");
+        Log.i(TAG, "Provision URL+QR hết "
+            + (WIFI_PROVISION_HOLD_MS / 1000) + "s — restore mắt");
       }
     } catch (Exception e) {
       Log.e(TAG, "showWifiProvisionUrlAndQr: " + e.getMessage(), e);
@@ -538,8 +542,9 @@ public class ActivationEyeDisplay {
     }
   }
 
-  private static void holdQrAgainstBlink(int epoch, EyeScreenApi api, Bitmap left, Bitmap right) {
-    long holdEnd = System.currentTimeMillis() + SELF_CONTROL_HOLD_MS;
+  private static void holdQrAgainstBlink(
+      int epoch, EyeScreenApi api, Bitmap left, Bitmap right, long holdMs) {
+    long holdEnd = System.currentTimeMillis() + holdMs;
     acquireEyeHold(epoch);
     try {
       holdQrLoop(epoch, api, left, right, holdEnd);
